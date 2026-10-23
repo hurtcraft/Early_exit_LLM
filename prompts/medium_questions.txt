@@ -1,0 +1,50 @@
+1. A train travels at 60 km/h for 2.5 hours, then at 80 km/h for 1.5 hours. What is the total distance traveled?
+2. A shirt costs $40 after a 20% discount. What was its original price?
+3. What is the next number in the sequence 2, 6, 12, 20, 30, ...?
+4. What is the capital of the country where Mount Kilimanjaro is located?
+5. If all bloops are razzies and all razzies are lazzies, are all bloops necessarily lazzies?
+6. How many seconds are there in 3.5 hours?
+7. What is the sum of the interior angles of a hexagon?
+8. A rectangle has a perimeter of 36 cm and its length is twice its width. What is its area?
+9. Which planet is closest to the Sun, and approximately how many Earth days does it take to orbit the Sun?
+10. Solve for x: x + 3 = 2x - 5.
+11. What is the chemical formula of water, and how many atoms are there in 3 molecules of it?
+12. A bakery bakes 12 muffins per tray and uses 7 trays. If it sells three quarters of the muffins, how many are left?
+13. Who wrote "Pride and Prejudice", and in which century was it published?
+14. What is the average of 12, 18, 25, 33, and 47?
+15. Why does the Earth have seasons?
+16. Convert 72 degrees Fahrenheit to Celsius, rounded to one decimal place.
+17. Three workers build a wall in 12 days. Assuming the same work rate, how many days would four workers need?
+18. Which is larger, 2^10 or 10^3, and by how much?
+19. What is the time complexity of binary search, and why?
+20. In what year did the French Revolution begin, and which event is commonly considered its start?
+21. A car consumes 6 liters of fuel per 100 km. How much fuel is needed for a 350 km trip?
+22. What is the probability of getting two heads in two flips of a fair coin?
+23. What are the inputs and outputs of photosynthesis?
+24. How much money will you have after 2 years if you invest $1000 at 10% annual compound interest?
+25. If today is Wednesday, what day of the week will it be in 100 days?
+26. What are the differences between mitosis and meiosis in terms of the number of daughter cells and their chromosome number?
+27. Solve for x: 3(x - 2) + 4 = 19.
+28. What is the largest prime number smaller than 50?
+29. A recipe uses 250 g of flour for 4 people. How much flour is needed for 10 people?
+30. What is the derivative of f(x) = x^3 + 5x^2 - 4x?
+31. Which fraction is larger, 3/7 or 4/9?
+32. Why does ice float on liquid water?
+33. A runner covers 400 meters in 50 seconds. What is the average speed in km/h?
+34. What does the Python expression [x**2 for x in range(5) if x % 2 == 0] return?
+35. Is a triangle with sides 5, 12, and 13 a right triangle, and what is its area?
+36. A is taller than B, B is taller than C, and D is shorter than C. Who is the shortest?
+37. What is the sum of the number of edges and the number of vertices of a cube?
+38. If prices rise by 5% per year, how much will a $200 item cost after 2 years?
+39. What is the most abundant gas in Earth's atmosphere, and approximately what percentage does it represent?
+40. Two numbers have a sum of 30 and a difference of 8. What are the two numbers?
+41. How many distinct arrangements can be made with the letters of the word "LEVEL"?
+42. Why does the sky appear blue during the day?
+43. The mean of four numbers is 10. If a fifth number, 20, is added, what is the new mean?
+44. What is the boiling point of water at sea level in Kelvin?
+45. What is the value of log base 2 of 64 plus log base 10 of 1000?
+46. Pipe A fills a tank in 6 hours and pipe B fills it in 3 hours. How long do they take together?
+47. What is the main difference between a stack and a queue in computer science?
+48. What is the square root of 144 minus the cube root of 27?
+49. A store sells 3 pens for $4.50. How much do 8 pens cost at the same price per pen?
+50. Which is the largest ocean on Earth, and approximately what fraction of the planet's surface does it cover?

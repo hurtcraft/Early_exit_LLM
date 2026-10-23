@@ -1,0 +1,39 @@
+# --- Models (downloaded weights) ---
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+
+# --- Caches ---
+__pycache__/
+*.py[cod]
+.cache/
+.hf_cache/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Results / outputs ---
+results/
+plots/
+results_*.json
+run.json
+*.log
+
+# --- Report (non-code documents) ---
+rapport/
+
+# --- Environments ---
+.venv/
+venv/
+env/
+.env
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

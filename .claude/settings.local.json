@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Hurtcraft/anaconda3/envs/recherche_env/Lib/site-packages/lm_eval/**)"
+    ]
+  }
+}

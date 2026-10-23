@@ -1,0 +1,50 @@
+1. A tank is filled by pipe A in 4 hours and by pipe B in 6 hours, while drain C empties it in 12 hours. If all three are open at the same time, how long does it take to fill the empty tank?
+2. Train A leaves city X at 9:00 heading to city Y at 60 km/h. Train B leaves city Y at 10:00 heading to city X at 90 km/h. The cities are 480 km apart. At what time do the trains meet, and how far from city X?
+3. You invest $5000 at 6% annual interest compounded yearly. What is the minimum number of whole years needed for the investment to more than double?
+4. Two cards are drawn without replacement from a standard 52-card deck. What is the probability that both are aces?
+5. On an island, knights always tell the truth and knaves always lie. A says "B is a knave." B says "A and I are the same type." Determine who is a knight and who is a knave, and justify your answer.
+6. A committee of 3 people is chosen from 5 men and 4 women. How many committees contain at least one woman?
+7. Explain why the harmonic series 1 + 1/2 + 1/3 + 1/4 + ... diverges even though its terms tend to zero.
+8. Consider the recursive function defined by f(0) = 1, f(1) = 1, and f(n) = f(n-1) + f(n-2) for n >= 2. What is f(7)?
+9. Explain the main differences between TCP and UDP, and give one example of an application where each is the better choice.
+10. Solve the system of equations: 2x + 3y = 12 and 4x - y = 5.
+11. Summarize three major causes commonly cited for the fall of the Western Roman Empire in 476 CE.
+12. A 2 kg ball is dropped from a height of 20 m. Ignoring air resistance and using g = 9.8 m/s^2, what is its speed just before hitting the ground and its kinetic energy at that moment?
+13. How many liters of a 30% alcohol solution must be mixed with 10 liters of a 60% alcohol solution to obtain a 40% alcohol solution?
+14. Explain how gradient descent works and why the choice of learning rate matters.
+15. Two fair six-sided dice are rolled. Given that at least one die shows a 3, what is the probability that the sum is 8?
+16. Explain how an increase in the central bank's interest rate typically affects inflation, borrowing, and the exchange rate.
+17. A flight departs Brussels at 14:00 local time (UTC+2) and lasts 8 hours 30 minutes. New York is at UTC-4. What is the local arrival time in New York?
+18. A cone with radius 3 cm and height 10 cm is filled with water. The water is poured into an empty cylinder with the same radius of 3 cm. What is the height of the water in the cylinder?
+19. Compare quicksort and mergesort in terms of average time complexity, worst-case time complexity, extra space usage, and stability.
+20. Describe how the CRISPR-Cas9 system is used to edit a specific gene.
+21. A sequence is defined by a1 = 2, a2 = 3, and a_n = a_(n-1) + a_(n-2) for n >= 3. What is the sum of the first 8 terms?
+22. Three boxes are labeled "apples", "oranges", and "mixed", but every label is wrong. You may draw one fruit from one box. How can you correctly relabel all boxes?
+23. A car worth $20,000 loses 15% of its value each year. What is its value after 3 years, and how much value has it lost in total?
+24. Explain why correlation does not imply causation, using a concrete example.
+25. How many 4-digit numbers (from 1000 to 9999) have all four digits distinct?
+26. A car accelerates uniformly from 10 m/s to 30 m/s in 8 seconds. What is its acceleration and the distance covered during this time?
+27. A disease affects 1% of a population. A test has 95% sensitivity and 90% specificity. If a person tests positive, what is the probability they actually have the disease?
+28. Explain how the self-attention mechanism in a Transformer works.
+29. Explain the main terms of the Treaty of Versailles (1919) and how they contributed to tensions in interwar Europe.
+30. The square of a number is 12 more than four times the number. Find all possible values of the number.
+31. Alice is twice as old as Bob was when Alice was as old as Bob is now. The sum of their current ages is 63. How old are Alice and Bob?
+32. Balance the combustion equation C3H8 + O2 -> CO2 + H2O, and state how many moles of O2 are needed to burn 2 moles of propane.
+33. Write a Python function that returns True if a string is a palindrome, ignoring case and non-alphanumeric characters, and explain how it works.
+34. For the data set 4, 8, 6, 5, 3, 7, 9, compute the mean, the median, and the population standard deviation.
+35. Explain what happens to the equilibrium price and quantity of oil if supply decreases while demand stays constant.
+36. What is the radius and the area of the largest circle that can be inscribed in a right triangle with legs 6 and 8?
+37. Explain why switching doors is the better strategy in the Monty Hall problem, with the probabilities involved.
+38. Explain the differences between supervised, unsupervised, and reinforcement learning, with one example of each.
+39. A bacterial population starts at 500 and doubles every 3 hours. What is the population after 24 hours, and after how many hours does it first exceed 1,000,000?
+40. Explain the greenhouse effect and why an increase in atmospheric CO2 leads to global warming.
+41. A 10 m ladder leans against a wall and makes a 60-degree angle with the ground. How high up the wall does it reach, and how far is its base from the wall?
+42. A bag contains 5 red, 3 blue, and 2 green balls. Three balls are drawn without replacement. What is the probability that exactly two are red?
+43. Explain how a hash table works and how it handles collisions.
+44. Worker A can complete a job in 10 days and worker B in 15 days. They work together for 4 days, then A leaves. How many more days does B need to finish the job alone?
+45. How many times does the inner statement execute in "for i in range(n): for j in range(i): do_something()", and what is the resulting time complexity?
+46. Explain the trolley problem and how a utilitarian and a deontological approach would respond to it.
+47. At 8% annual compound interest, approximately how many years does it take for an investment to triple?
+48. Explain why the Moon causes tides and why most coastlines experience two high tides per day.
+49. What is the remainder when 7^100 is divided by 5? Show your reasoning.
+50. Describe the main steps that occur between typing a URL into a browser and seeing the web page displayed.
