@@ -1,5 +1,6 @@
 # --- Models (downloaded weights) ---
-models/
+# "/" initial : seulement models/ à la racine, pas early_exit/models/ (du code)
+/models/
 *.safetensors
 *.bin
 *.pt
