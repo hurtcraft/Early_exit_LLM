@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from strategy.EarlyExitStrategy import EarlyExitStrategy
+from early_exit.strategies.EarlyExitStrategy import EarlyExitStrategy
 
 
 class CosineExitStrategy(EarlyExitStrategy):

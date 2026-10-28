@@ -1,122 +1,27 @@
-import difflib
-import itertools
 import json
 import traceback
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Type
+from typing import Any, Dict, List, Optional, Type
 
 from tqdm import tqdm
 
-from inference.EarlyExitGenerate import early_exit_generate
-from models_utils import build_run_config, summarize_run
-from strategy.NoExitStrategy import NoExitStrategy
+from bench_prompts.metrics import build_run_config, compare_to_baseline, summarize_run
+from early_exit.generate import early_exit_generate
+from early_exit.strategies.NoExitStrategy import NoExitStrategy
+from early_exit.utils import expand_grid
 
 
-# =========================================================================== #
-# Métriques de comparaison avec la baseline
-# =========================================================================== #
-def _get(result: Any, key: str) -> Any:
-    """Lit une clé dans un résultat (dict ou objet), avec une erreur explicite."""
-    if isinstance(result, dict):
-        if key in result:
-            return result[key]
-        raise KeyError(
-            f"Clé '{key}' absente du résultat de early_exit_generate. "
-            f"Clés disponibles : {list(result.keys())}. "
-            f"Adapte text_key / exit_layers_key dans ExperimentRunner."
-        )
-    if hasattr(result, key):
-        return getattr(result, key)
-    raise AttributeError(
-        f"Attribut '{key}' absent du résultat ({type(result).__name__}). "
-        f"Adapte text_key / exit_layers_key dans ExperimentRunner."
-    )
-def response_divergence(base_tokens: Sequence, tokens: Sequence) -> Dict[str, float]:
-    """
-    Compare baseline vs stratégie. Comme la génération est autorégressive,
-    dès que la séquence diverge tout ce qui suit est différent : le préfixe
-    commun est donc la métrique de fidélité clé.
-    """
-    base_tokens, tokens = list(base_tokens), list(tokens)
-    longest = max(len(base_tokens), len(tokens))
-
-    prefix = 0
-    for a, b in zip(base_tokens, tokens):
-        if a != b:
-            break
-        prefix += 1
-
-    return {
-        # 1.0 si la réponse est strictement identique à la baseline
-        "exact_match": float(base_tokens == tokens),
-        # fraction de la réponse reproduite avant la 1re divergence
-        # (divisée par la plus longue des deux : pas de 1.0 si la stratégie rallonge)
-        "prefix_match_ratio": prefix / longest if longest else 1.0,
-    }
-
-
-def layer_savings(exit_layers: Sequence[float], num_layers: int) -> Dict[str, float]:
-    """Couches économisées par rapport au modèle complet (indexé 0..num_layers-1)."""
-    last = num_layers - 1
-    mean_exit = sum(exit_layers) / len(exit_layers) if exit_layers else float(last)
-    return {"skipped_layers": last - mean_exit}
-
-
-def compare_to_baseline(
-    baseline_results: List[Any],
-    results: List[Any],
-    num_layers: int,
-    text_key: str,
-    exit_layers_key: str,
-    tokens_key: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Compare chaque question à la baseline et agrège les métriques."""
-    if len(baseline_results) != len(results):
-        raise ValueError("La baseline et le run n'ont pas le même nombre de questions.")
-
-    def has(r, key):
-        return key in r if isinstance(r, dict) else hasattr(r, key)
-
-    use_tokens = bool(tokens_key) and all(has(r, tokens_key) for r in results + baseline_results)
-    if tokens_key and not use_tokens:
-        print(f"    (!) clé '{tokens_key}' absente des résultats : "
-              f"comparaison par mots à la place des tokens")
-
-    def seq(r):
-        if use_tokens:
-            return list(_get(r, tokens_key))
-        return str(_get(r, text_key)).split()
-
-    per_question = []
-    for i, (b, r) in enumerate(zip(baseline_results, results)):
-        per_question.append({
-            "question_idx": i,
-            "baseline_text": _get(b, text_key),
-            "text": _get(r, text_key),
-            **response_divergence(seq(b), seq(r)),
-            **layer_savings(list(_get(r, exit_layers_key)), num_layers),
-        })
-
-    def mean(key):
-        return sum(q[key] for q in per_question) / len(per_question)
-
-    summary = {
-        "exact_match_rate": mean("exact_match"),
-        "mean_prefix_match_ratio": mean("prefix_match_ratio"),
-        "mean_skipped_layers": mean("skipped_layers"),
-    }
-    return {"summary": summary, "per_question": per_question}
-# =========================================================================== #
-# Runner
-# =========================================================================== #
-class ExperimentRunner:
+class PromptGridRunner:
     """
     Lance automatiquement plusieurs combinaisons (stratégie x hyperparamètres)
-    sur un même jeu de questions et sauvegarde un JSON par run + un résumé global.
+    sur un même jeu de prompts custom.
 
     NoExitStrategy est TOUJOURS exécutée en premier et sert de baseline :
     chaque autre run est comparé à ses réponses, question par question.
+
+    Fichiers écrits dans results_dir (un dossier par modèle) :
+        runs/<Stratégie>_<params>.json   détail d'un run
+        GRID_SUMMARY.json                résumé de tous les runs
     """
 
     def __init__(
@@ -158,7 +63,7 @@ class ExperimentRunner:
         strategy_cls: Type,
         param_grid: Optional[Dict[str, List[Any]]] = None,
         fixed_params: Optional[Dict[str, Any]] = None,
-    ) -> "ExperimentRunner":
+    ) -> "PromptGridRunner":
         """
         param_grid   : paramètres à faire varier  -> {"threshold": [0.1, 0.2]}
         fixed_params : paramètres constants       -> {"min_layer": 10}
@@ -171,24 +76,14 @@ class ExperimentRunner:
         self._experiments.append((strategy_cls, param_grid or {}, fixed_params or {}))
         return self
 
-    @staticmethod
-    def _expand_grid(param_grid: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
-        if not param_grid:
-            return [{}]
-        keys = list(param_grid.keys())
-        return [
-            dict(zip(keys, values))
-            for values in itertools.product(*(param_grid[k] for k in keys))
-        ]
-
     def _iter_runs(self):
         for strategy_cls, param_grid, fixed in self._experiments:
-            for combo in self._expand_grid(param_grid):
+            for combo in expand_grid(param_grid):
                 yield strategy_cls, {**fixed, **combo}
 
     def count_runs(self) -> int:
         """Nombre total de runs, baseline comprise."""
-        return 1 + sum(len(self._expand_grid(g)) for _, g, _ in self._experiments)
+        return 1 + sum(len(expand_grid(g)) for _, g, _ in self._experiments)
 
     # ------------------------------------------------------------------ #
     # Exécution
@@ -213,19 +108,17 @@ class ExperimentRunner:
         return output
 
     def _save(self, output: Dict[str, Any], strategy, params: Dict[str, Any]) -> Path:
-        self.results_dir.mkdir(parents=True, exist_ok=True)
-        now = datetime.now().astimezone()
+        runs_dir = self.results_dir / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
 
+        # le dossier indique déjà la date et le modèle : nom = stratégie + paramètres
         params_str = "_".join(
             f"{k}{str(v).replace('.', 'p')}"
             for k, v in params.items()
             if k != "tokenizer"
         )
-        filename = (
-            f"{self.model_name}_{strategy.__class__.__name__}_"
-            f"{params_str}_{now.strftime('%Y%m%d_%H%M%S')}.json"
-        )
-        path = self.results_dir / filename
+        name = strategy.__class__.__name__ + (f"_{params_str}" if params_str else "")
+        path = runs_dir / f"{name}.json"
 
         with path.open("w", encoding="utf-8") as f:
             json.dump(output, f, indent=2, ensure_ascii=False, default=str)
@@ -321,11 +214,9 @@ class ExperimentRunner:
         return ", ".join(f"{k}={v}" for k, v in params.items() if k != "tokenizer")
 
     def _save_global_summary(self) -> None:
-        now = datetime.now().astimezone()
-        path = self.results_dir / (
-            f"{self.model_name}_GRID_SUMMARY_{now.strftime('%Y%m%d_%H%M%S')}.json"
-        )
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+        path = self.results_dir / "GRID_SUMMARY.json"
         with path.open("w", encoding="utf-8") as f:
             json.dump(self.all_summaries, f, indent=2, ensure_ascii=False, default=str)
-        self.summary_path = path   # lu par main.py pour générer les plots
+        self.summary_path = path   # lu par run_prompts.py pour générer les plots
         print(f"Résumé global : {path}")

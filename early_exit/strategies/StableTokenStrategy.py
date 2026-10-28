@@ -1,11 +1,11 @@
-from strategy.EarlyExitStrategy import EarlyExitStrategy
+from early_exit.strategies.EarlyExitStrategy import EarlyExitStrategy
 import torch
 import torch
 
-from strategy.EarlyExitStrategy import EarlyExitStrategy
+from early_exit.strategies.EarlyExitStrategy import EarlyExitStrategy
 import torch
 
-from strategy.EarlyExitStrategy import EarlyExitStrategy
+from early_exit.strategies.EarlyExitStrategy import EarlyExitStrategy
 
 
 class StableTokenStrategy(EarlyExitStrategy):

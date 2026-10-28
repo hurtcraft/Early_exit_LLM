@@ -13,8 +13,8 @@ Secondary panels:
 
 The total number of layers is read from the baseline (mean_exit_layer).
 
-Usage: python plot_results.py results/<model>_GRID_SUMMARY_xxx.json [out_dir]
-Output: <out_dir or plots>/<model>_early_exit_<Strategy>.png
+Usage: python bench_prompts/plots.py results/prompts/<date>/<model>/GRID_SUMMARY.json [out_dir]
+Output: <out_dir or plots/prompts>/<model>_<Strategy>.png
 """
 import json
 import sys
@@ -27,7 +27,7 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 from matplotlib.ticker import PercentFormatter
 
-DEFAULT_OUT_DIR = Path(__file__).resolve().parent / "plots"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parent.parent / "plots" / "prompts"
 
 PAT_COLOR = {2: "#ff7f0e", 3: "#1f77b4"}
 PAT_MARKER = {2: "o", 3: "s"}
@@ -97,8 +97,12 @@ def plot_grid_summary(path, out_dir=None) -> list:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
-    # model name = filename prefix, e.g. "qwen3.5-2b_GRID_SUMMARY_xxx.json" -> "qwen3.5-2b"
-    model = path.stem.split("_GRID_SUMMARY")[0]
+    # nouveau format : results/prompts/<date>/<model>/GRID_SUMMARY.json -> nom du dossier
+    # ancien format   : results/<model>_GRID_SUMMARY_<date>.json      -> préfixe du fichier
+    if path.stem == "GRID_SUMMARY":
+        model = path.parent.name
+    else:
+        model = path.stem.split("_GRID_SUMMARY")[0]
 
     base = next(d for d in data if d["strategy"] == "NoExitStrategy")["summary"]
     runs = [d for d in data if "comparison" in d]
@@ -180,7 +184,7 @@ def plot_grid_summary(path, out_dir=None) -> list:
         fig.suptitle(f"{model} | {strat} vs baseline (NoExitStrategy, {int(n_layers)} layers)",
                      fontsize=14, fontweight="bold")
         plt.tight_layout(rect=(0, 0, 1, 0.96))
-        out = out_dir / f"{model}_early_exit_{strat}.png"
+        out = out_dir / f"{model}_{strat}.png"
         plt.savefig(out, dpi=150, bbox_inches="tight")
         print("saved", out)
         plt.close(fig)
@@ -190,7 +194,7 @@ def plot_grid_summary(path, out_dir=None) -> list:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit("Usage: python plot_results.py <GRID_SUMMARY.json> [out_dir]")
+        sys.exit("Usage: python bench_prompts/plots.py <GRID_SUMMARY.json> [out_dir]")
     plot_grid_summary(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
 # """"
 # Visualisation d'un fichier GRID_SUMMARY produit par ExperimentRunner.

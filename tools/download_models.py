@@ -12,10 +12,11 @@ import json
 from pathlib import Path
 from huggingface_hub import snapshot_download
 
-MODELS_DIR = Path("models")
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODELS_JSON = Path(__file__).resolve().parent / "models_to_test.json"
 
 
-def download_models(json_path: str = "models_to_test.json") -> dict[str, Path]:
+def download_models(json_path: str | Path = MODELS_JSON) -> dict[str, Path]:
     json_file = Path(json_path)
     if not json_file.exists():
         raise FileNotFoundError(f"Fichier JSON non trouvé : {json_file}")
@@ -48,5 +49,4 @@ def download_models(json_path: str = "models_to_test.json") -> dict[str, Path]:
     return local_paths
 
 
-#if __name__ == "__main__":
 download_models()

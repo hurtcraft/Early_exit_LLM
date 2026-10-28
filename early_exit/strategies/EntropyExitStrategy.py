@@ -2,7 +2,7 @@ import math
 
 import torch
 
-from strategy.EarlyExitStrategy import EarlyExitStrategy
+from early_exit.strategies.EarlyExitStrategy import EarlyExitStrategy
 
 
 class EntropyStrategy(EarlyExitStrategy):

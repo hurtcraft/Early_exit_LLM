@@ -8,8 +8,9 @@ Panels:
       dotted line  (right axis) : skipped layers / total layers
   - trade-off: main score vs skipped layers, all strategies (baseline = star at 0%)
 
-Usage: python plot_benchmarks.py results/benchmarks/<model>_<quant>_<task>_xxx.json [...]
-Output: plots/benchmarks/<same name>.png
+Usage: python bench_lmeval/plots.py results/lmeval/<date>/<model>/<task>.json [...]
+Output: plots/lmeval/<model>_<quant>_<task>[_patience<p>].png
+        (one figure per patience value when the grid has several)
 """
 import json
 import math
@@ -21,7 +22,7 @@ matplotlib.use("Agg")   # figures are only saved (also called during main_benchm
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 
-OUT_DIR = Path(__file__).resolve().parent / "plots" / "benchmarks"
+DEFAULT_OUT_DIR = Path(__file__).resolve().parent.parent / "plots" / "lmeval"
 BASELINE = "NoExitStrategy"
 
 METRIC_COLOR = ["#1f77b4", "#2ca02c", "#9467bd", "#8c564b"]
@@ -131,17 +132,7 @@ def tradeoff_panel(ax, runs, base, metric, strategies):
 
 
 # --- figure ------------------------------------------------------------------
-def plot_benchmark(path) -> Path | None:
-    path = Path(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
-
-    ok = [r for r in data["runs"] if "results" in r]
-    base = next((r for r in ok if r["strategy"]["name"] == BASELINE), None)
-    runs = [r for r in ok if r is not base]
-    if base is None or not runs:
-        print(f"skipped {path.name}: baseline or strategies missing")
-        return None
-
+def _plot_figure(data, runs, base, out: Path, subtitle: str = "") -> Path:
     metrics = score_metrics(base["results"])
     strategies = list(dict.fromkeys(r["strategy"]["name"] for r in runs))
 
@@ -161,22 +152,47 @@ def plot_benchmark(path) -> Path | None:
     limit = data["options"].get("limit")
     fig.suptitle(
         f"{data['model']} ({data['quant'] or 'bf16'}) | {data['task']} "
-        f"({limit or 'all'} examples) | {data['n_layers']} layers | vs baseline (NoExitStrategy)",
+        f"({limit or 'all'} examples) | {data['n_layers']} layers{subtitle} "
+        f"| vs baseline (NoExitStrategy)",
         fontsize=14, fontweight="bold",
     )
     plt.tight_layout(rect=(0, 0, 1, 0.96))
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = OUT_DIR / f"{path.stem}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print("saved", out)
     return out
 
 
+def plot_benchmark(path, out_dir=None) -> list[Path]:
+    """Une figure par valeur de patience (une seule si la grille n'en a qu'une)."""
+    path = Path(path)
+    out_dir = Path(out_dir) if out_dir else DEFAULT_OUT_DIR
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    ok = [r for r in data["runs"] if "results" in r]
+    base = next((r for r in ok if r["strategy"]["name"] == BASELINE), None)
+    runs = [r for r in ok if r is not base]
+    if base is None or not runs:
+        print(f"skipped {path.name}: baseline or strategies missing")
+        return []
+
+    stem = f"{data['model']}_{data['quant'] or 'bf16'}_{data['task']}"
+    patiences = sorted({r["strategy"].get("patience") for r in runs}, key=str)
+    if len(patiences) == 1:
+        return [_plot_figure(data, runs, base, out_dir / f"{stem}.png")]
+
+    return [
+        _plot_figure(data, [r for r in runs if r["strategy"].get("patience") == pat], base,
+                     out_dir / f"{stem}_patience{pat}.png", f" | patience={pat}")
+        for pat in patiences
+    ]
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit("Usage: python plot_benchmarks.py <benchmark.json> [...]")
+        sys.exit("Usage: python bench_lmeval/plots.py <task.json> [...]")
     for arg in sys.argv[1:]:
         # PowerShell ne développe pas les motifs (*.json) : on le fait ici
         paths = sorted(Path().glob(arg)) if any(c in arg for c in "*?[") else [Path(arg)]

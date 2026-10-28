@@ -2,7 +2,7 @@ import torch
 from lm_eval import evaluator
 from lm_eval.models.huggingface import HFLM
 
-from inference.EarlyExitHFLM import EarlyExitHFLM
+from bench_lmeval.hflm import EarlyExitHFLM
 
 
 def run_benchmark(

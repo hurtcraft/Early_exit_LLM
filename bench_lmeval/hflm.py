@@ -2,23 +2,8 @@ import torch
 from lm_eval.models.huggingface import HFLM
 from tqdm import tqdm
 
-
-def _is_linear_layer(text_model, i: int) -> bool:
-    """Indique si la couche i est une couche d'attention linéaire (DeltaNet)."""
-    layer = text_model.layers[i]
-
-    # 1) Structure de la couche (le plus fiable)
-    if hasattr(layer, "linear_attn"):
-        return True
-    if hasattr(layer, "self_attn"):
-        return False
-
-    # 2) Repli sur la config
-    layer_types = getattr(text_model.config, "layer_types", None)
-    if layer_types is not None:
-        return layer_types[i] == "linear_attention"
-
-    raise RuntimeError(f"Type de la couche {i} indéterminé")
+from early_exit.generate import _eos_ids
+from early_exit.layers import _layer_trace, _run_layers
 
 
 class EarlyExitHFLM(HFLM):
@@ -45,9 +30,6 @@ class EarlyExitHFLM(HFLM):
 
     @torch.inference_mode()
     def _model_call(self, inps, attn_mask=None, labels=None):
-        # import local : EarlyExitGenerate importe _is_linear_layer depuis ce module
-        from inference.EarlyExitGenerate import _layer_trace, _run_layers
-
         trace = _layer_trace(self.adapter, inps, self.trace_cache)
         last_logits, exit_layer, _ = _run_layers(self.adapter, self.strategy, trace)
         self.exit_layers.append(exit_layer)
@@ -63,8 +45,6 @@ class EarlyExitHFLM(HFLM):
     def _model_generate(self, context, max_length, stop, **generation_kwargs):
         """Génération gloutonne avec early exit. Retourne contexte + tokens générés ;
         lm_eval retire le contexte et coupe lui-même sur les séquences `stop`."""
-        from inference.EarlyExitGenerate import _eos_ids, _layer_trace, _run_layers
-
         input_ids = context
         start = context.shape[1]
         eos = _eos_ids(self.adapter)
