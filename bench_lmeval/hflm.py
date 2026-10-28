@@ -3,18 +3,19 @@ from lm_eval.models.huggingface import HFLM
 from tqdm import tqdm
 
 from early_exit.generate import _eos_ids
-from early_exit.layers import _layer_trace, _run_layers
+from early_exit.layers import LayerTracer, _layer_trace, _run_layers
 
 
 class EarlyExitHFLM(HFLM):
     """HFLM dont le forward utilise un adaptateur + une stratégie d'early exit.
 
     - loglikelihood (MMLU…) : _model_call, décision d'early exit sur la dernière position.
-    - generate_until (GSM8K…) : _model_generate, génération gloutonne token par token,
-      une décision d'early exit par token.
+    - generate_until (GSM8K…) : _model_generate, génération gloutonne token par token
+      avec KV cache (LayerTracer), une décision d'early exit par token.
 
     trace_cache : dict partagé entre plusieurs EarlyExitHFLM (une par stratégie) pour
-    réutiliser les forwards d'une même séquence (cf. CpuTraceCache).
+    réutiliser les forwards d'une même séquence (cf. CpuTraceCache). Utilisé
+    seulement par loglikelihood : la génération a son propre KV cache.
     """
 
     def __init__(self, adapter, strategy, trace_cache: dict | None = None, **kwargs):
@@ -44,27 +45,38 @@ class EarlyExitHFLM(HFLM):
     @torch.inference_mode()
     def _model_generate(self, context, max_length, stop, **generation_kwargs):
         """Génération gloutonne avec early exit. Retourne contexte + tokens générés ;
-        lm_eval retire le contexte et coupe lui-même sur les séquences `stop`."""
-        input_ids = context
+        lm_eval retire le contexte et coupe lui-même sur les séquences `stop`.
+
+        KV cache : le prompt passe une fois dans les couches (prefill), puis chaque
+        token généré seul."""
         start = context.shape[1]
         eos = _eos_ids(self.adapter)
         tok = self.adapter.tokenizer
+        # une séquence stop qui vient d'apparaître finit dans les derniers tokens :
+        # inutile de décoder tout le texte généré à chaque pas
+        tail = max((len(s) for s in stop), default=0) + 1
+
+        tracer = LayerTracer(self.adapter)
+        trace = tracer.step(context)
+        generated = []
 
         # une question peut prendre plusieurs minutes : barre par token générée
         with tqdm(total=max_length - start, desc="tokens", unit="tok", leave=False) as bar:
-            while input_ids.shape[1] < max_length:
-                trace = _layer_trace(self.adapter, input_ids, self.trace_cache)
+            while start + len(generated) < max_length:
                 logits, exit_layer, _ = _run_layers(self.adapter, self.strategy, trace)
                 self.exit_layers.append(exit_layer)
 
                 next_id = logits[:, -1, :].argmax(dim=-1, keepdim=True)
-                input_ids = torch.cat([input_ids, next_id], dim=-1)
+                generated.append(next_id)
                 bar.update(1)
 
                 if next_id.item() in eos:
                     break
                 # arrêt dès qu'une séquence stop apparaît : inutile de générer la suite
-                if any(s in tok.decode(input_ids[0, start:]) for s in stop):
+                recent = tok.decode(torch.cat(generated[-tail:], dim=-1)[0])
+                if any(s in recent for s in stop):
                     break
 
-        return input_ids
+                trace = tracer.step(next_id)
+
+        return torch.cat([context, *generated], dim=-1)

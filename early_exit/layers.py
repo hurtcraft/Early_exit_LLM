@@ -2,9 +2,12 @@
 
 - _layer_trace : forward complet de la séquence, couche par couche, et garde le
   hidden state de la dernière position à chaque couche (partageable via un cache).
+- LayerTracer  : même trace, mais avec KV cache, pour la génération : chaque appel
+  ne calcule que les nouveaux tokens.
 - _run_layers  : rejoue une stratégie couche par couche sur cette trace.
 """
 import torch
+from transformers import DynamicCache
 
 
 def _is_linear_layer(text_model, i: int) -> bool:
@@ -25,20 +28,50 @@ def _is_linear_layer(text_model, i: int) -> bool:
     raise RuntimeError(f"Type de la couche {i} indéterminé")
 
 
-def _build_layer_inputs(adapter, input_ids: torch.Tensor):
-    """Embeddings, position_ids, position_embeddings (mRoPE) et masque causal."""
+def _build_layer_inputs(adapter, input_ids: torch.Tensor, offset: int = 0):
+    """Embeddings, position_ids, position_embeddings (mRoPE) et masque causal.
+
+    offset : nombre de tokens déjà dans le KV cache (positions offset .. offset+L-1).
+    """
     tm = adapter.model.model
     B, L = input_ids.shape
     hidden = adapter.get_embeddings(input_ids)
 
-    pos = torch.arange(L, device=input_ids.device).unsqueeze(0).expand(B, -1)
+    pos = torch.arange(offset, offset + L, device=input_ids.device).unsqueeze(0).expand(B, -1)
     pe = tm.rotary_emb(hidden, pos.unsqueeze(0).expand(3, -1, -1))
-    mask = torch.full(
-        (L, L), torch.finfo(hidden.dtype).min,
-        device=input_ids.device, dtype=hidden.dtype,
-    ).triu(1)[None, None]
+
+    # Un seul nouveau token voit tout le passé : pas de masque.
+    # Sinon [L, offset+L] : le token i voit les clés j <= offset + i.
+    mask = None
+    if L > 1:
+        mask = torch.full(
+            (L, offset + L), torch.finfo(hidden.dtype).min,
+            device=input_ids.device, dtype=hidden.dtype,
+        ).triu(offset + 1)[None, None]
 
     return hidden, pos, pe, mask
+
+
+def _forward_trace(adapter, input_ids: torch.Tensor, offset: int = 0, cache=None) -> torch.Tensor:
+    """Exécute toutes les couches sur input_ids et garde le hidden state de la
+    dernière position à chaque couche : [n_layers, B, H].
+    cache : DynamicCache lu et mis à jour par les couches (None = sans cache)."""
+    tm = adapter.model.model
+    hidden, pos, pe, mask = _build_layer_inputs(adapter, input_ids, offset)
+
+    lasts = []
+    for i in range(adapter.num_layers):
+        layer_mask = None if _is_linear_layer(tm, i) else mask
+        hidden, _ = adapter.forward_layer(
+            i, hidden,
+            attention_mask=layer_mask,
+            position_ids=pos,
+            position_embeddings=pe,
+            past_key_values=cache,
+        )
+        lasts.append(hidden[:, -1, :])
+
+    return torch.stack(lasts)
 
 
 # ---------- Forward avec early exit ----------
@@ -68,24 +101,36 @@ def _layer_trace(adapter, input_ids: torch.Tensor, cache: dict | None = None) ->
     if cache is not None and key in cache:
         return cache[key]
 
-    tm = adapter.model.model
-    hidden, pos, pe, mask = _build_layer_inputs(adapter, input_ids)
-
-    lasts = []
-    for i in range(adapter.num_layers):
-        layer_mask = None if _is_linear_layer(tm, i) else mask
-        hidden, _ = adapter.forward_layer(
-            i, hidden,
-            attention_mask=layer_mask,
-            position_ids=pos,
-            position_embeddings=pe,
-        )
-        lasts.append(hidden[:, -1, :])
-
-    trace = torch.stack(lasts)
+    trace = _forward_trace(adapter, input_ids)
     if cache is not None:
         cache[key] = trace
     return trace
+
+
+class LayerTracer:
+    """Trace couche par couche avec KV cache, pour la génération token par token.
+
+    Le premier appel (prefill) traite tout le prompt ; les suivants ne traitent que
+    le token ajouté. Toutes les couches restent calculées pour chaque token : la
+    trace est la même que _layer_trace sur la séquence complète (aux arrondis bf16
+    près), seul le recalcul du passé disparaît.
+
+    Le cache de Qwen3.5 est hybride : K/V pour les couches d'attention complète,
+    états récurrent + convolution pour les couches DeltaNet. Les couches le
+    mettent à jour elles-mêmes via past_key_values.
+    """
+
+    def __init__(self, adapter):
+        self.adapter = adapter
+        self.cache = DynamicCache(config=adapter.model.config)
+        self.seen = 0   # tokens déjà dans le cache
+
+    def step(self, new_ids: torch.Tensor) -> torch.Tensor:
+        """new_ids : [B, n] nouveaux tokens. Retourne la trace [n_layers, B, H]
+        de la dernière position."""
+        trace = _forward_trace(self.adapter, new_ids, offset=self.seen, cache=self.cache)
+        self.seen += new_ids.shape[1]
+        return trace
 
 
 def _run_layers(adapter, strategy, trace: torch.Tensor, verbose: bool = False):

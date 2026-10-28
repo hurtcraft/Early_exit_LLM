@@ -30,14 +30,14 @@ from early_exit.utils import expand_grid, free_memory, model_tag, strategy_param
 # Configuration
 # --------------------------------------------------
 # tâche lm_eval -> options (limit = nb d'exemples par tâche, None = complet)
-# GSM8K sans KV cache est très lent : garder une petite limite.
+# GSM8K (génération) reste le plus coûteux : une décision par token généré.
 BENCHMARKS = {
     #"mmlu": {"limit": 5, "num_fewshot": 5, "apply_chat_template": False},
     "gsm8k": {"limit": 10},
 }
 
-# Cache des forwards partagé entre stratégies (en RAM). Gain important,
-# mais la mémoire grossit avec le nombre de tokens traités (surtout GSM8K).
+# Cache des forwards partagé entre stratégies (en RAM), pour les tâches par
+# loglikelihood (MMLU…). La génération (GSM8K) ne l'utilise pas : KV cache.
 USE_TRACE_CACHE = True
 
 # un dossier par lancement
