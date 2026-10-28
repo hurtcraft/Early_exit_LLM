@@ -1,0 +1,11 @@
+
+torch>=2.14
+transformers==5.17.0
+accelerate==1.15.0
+safetensors==0.8.0
+tokenizers==0.23.2
+huggingface_hub==1.32.0
+bitsandbytes==0.50.2   # quantification 8bit / 4bit uniquement
+lm_eval==0.4.13
+matplotlib==3.11.2
+tqdm==4.70.1

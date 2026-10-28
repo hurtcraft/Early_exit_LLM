@@ -1,0 +1,2 @@
+# Scripts shell en fins de ligne LF, même depuis Windows (sinon erreurs "\r" sur le pod)
+*.sh text eol=lf
