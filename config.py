@@ -12,17 +12,23 @@ MODELS = [
 
 PATIENCES = [2, 3]
 
-STRATEGY_GRID = [
-    (EntropyStrategy,
-     {"threshold": [0.05, 0.1, 0.2, 0.4, 0.6], "patience": PATIENCES},
-     {"min_layer": 10}),
-    (StableTokenStrategy,
-     {"threshold": [0.95, 0.9, 0.7, 0.5, 0.3], "patience": PATIENCES},
-     {"min_layer": 10}),
-    (CosineExitStrategy,
-     {"threshold": [0.99, 0.98, 0.97, 0.96, 0.95], "patience": PATIENCES},
-     {"min_layer": 10}),
-]
+
+def strategy_grid(n_layers: int) -> list:
+    """Grille des stratégies pour un modèle de n_layers couches.
+    min_layer = moitié de la profondeur : même position relative quel que soit le
+    modèle (2B : 24 couches -> 12 ; 4B / 9B : 32 couches -> 16)."""
+    min_layer = n_layers // 2
+    return [
+        (EntropyStrategy,
+         {"threshold": [0.05, 0.1, 0.2, 0.4, 0.6], "patience": PATIENCES},
+         {"min_layer": min_layer}),
+        (StableTokenStrategy,
+         {"threshold": [0.95, 0.9, 0.7, 0.5, 0.3], "patience": PATIENCES},
+         {"min_layer": min_layer}),
+        (CosineExitStrategy,
+         {"threshold": [0.95, 0.93, 0.9, 0.87, 0.85], "patience": PATIENCES},
+         {"min_layer": min_layer}),
+    ]
 
 # Ancienne grille (résultats MMLU / GSM8K du 28/10) :
 # STRATEGY_GRID = [

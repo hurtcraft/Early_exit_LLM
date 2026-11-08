@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from bench_lmeval.evaluate import evaluate_early_exit
 from bench_lmeval.plots import plot_benchmark
-from config import MODELS, STRATEGY_GRID
+from config import MODELS, strategy_grid
 from early_exit.layers import CpuTraceCache
 from early_exit.models.factory import ModelFactory
 from early_exit.strategies.NoExitStrategy import NoExitStrategy
@@ -49,10 +49,10 @@ PLOTS_DIR = Path("plots") / "lmeval" / STAMP
 
 
 
-def build_strategies():
-    """NoExitStrategy en tête, puis toutes les combinaisons de la grille."""
+def build_strategies(n_layers: int):
+    """NoExitStrategy en tête, puis toutes les combinaisons de la grille du modèle."""
     strategies = [NoExitStrategy()]
-    for cls, grid, fixed in STRATEGY_GRID:
+    for cls, grid, fixed in strategy_grid(n_layers):
         for combo in expand_grid(grid):
             strategies.append(cls(**fixed, **combo))
     return strategies
@@ -85,7 +85,8 @@ def print_summary(model_name: str, task: str, runs: list) -> None:
 
 
 
-runs_per_model = len(BENCHMARKS) * len(build_strategies())
+# le nombre de stratégies ne dépend pas du modèle (seul min_layer change)
+runs_per_model = len(BENCHMARKS) * (1 + sum(len(expand_grid(g)) for _, g, _ in strategy_grid(0)))
 
 bar = tqdm(total=len(MODELS) * runs_per_model, desc="Total", unit="run", position=0)
 
@@ -107,7 +108,7 @@ for model_name, quant in MODELS:
             use_cache = eval_options.pop("cache_traces", USE_TRACE_CACHE)
             trace_cache = CpuTraceCache(device) if use_cache else None
 
-            for strategy in build_strategies():
+            for strategy in build_strategies(adapter.num_layers):
                 run = {"label": label(strategy), "strategy": strategy_params(strategy)}
                 bar.set_postfix_str(f"{model_name} | {task} | {run['label']}")
                 try:

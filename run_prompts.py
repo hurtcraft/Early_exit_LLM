@@ -13,7 +13,7 @@ from pathlib import Path
 
 from bench_prompts.plots import plot_grid_summary
 from bench_prompts.runner import PromptGridRunner
-from config import MODELS, STRATEGY_GRID
+from config import MODELS, strategy_grid
 from early_exit.models.factory import ModelFactory
 from early_exit.utils import free_memory, model_tag, timestamp
 
@@ -49,7 +49,7 @@ def build_runner(adapter, model_name, quant, questions):
         max_new_tokens=MAX_NEW_TOKENS,
         verbose=VERBOSE,
     )
-    for strategy_cls, param_grid, fixed_params in STRATEGY_GRID:
+    for strategy_cls, param_grid, fixed_params in strategy_grid(adapter.num_layers):
         runner.add_strategy(strategy_cls, param_grid=param_grid, fixed_params=fixed_params)
     return runner
 
