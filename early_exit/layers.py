@@ -180,7 +180,7 @@ def _run_layers(adapter, strategy, trace: torch.Tensor, verbose: bool = False):
 
 
 def _run_layers_rows(adapter, strategy, trace: torch.Tensor, targets: torch.Tensor,
-                     chunk: int = 128):
+                     chunk: int = 512):
     """Early exit indépendant pour chaque position (réponses de plusieurs tokens,
     perplexité). Chaque position décide seule de sa couche de sortie, comme si
     c'était un token généré, mais toutes les positions sont traitées en parallèle.
