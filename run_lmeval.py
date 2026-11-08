@@ -33,19 +33,13 @@ from early_exit.utils import expand_grid, free_memory, model_tag, strategy_param
 #                  réponses longues) : le cache ne tiendrait pas en RAM.
 # Options passées à evaluate_early_exit :
 #   max_length   : longueur max d'une entrée ; pour WikiText = taille des fenêtres.
-BENCHMARKS = {
-    #"mmlu": {"limit": 5, "num_fewshot": 5, "apply_chat_template": False},
-    #"gsm8k": {"limit": 10,"num_fewshot": 5, "apply_chat_template": False},
-    # perplexité : limit = nombre d'articles (62 au total, ~4 000 tokens chacun)
-    # cache RAM ≈ 9 Go (2B) / 15 Go (4B) / 24 Go (9B) pour 20 articles ; ×3 pour les 62
-    "wikitext": {"limit": 20, "num_fewshot": None, "apply_chat_template": False,
-                 "max_length": 2048, "cache_traces": True},
-    # QCM à réponses longues (4 fins de phrase) : limit = nombre de questions
-    # cache RAM ≈ 5,5 Go (2B) / 9 Go (4B) / 15 Go (9B) pour 1000 questions
-    "hellaswag": {"limit": 1000, "num_fewshot": 0, "apply_chat_template": False,
-                  "cache_traces": True},
-}
 
+BENCHMARKS = {
+    "wikitext": {"limit": None, "num_fewshot": None, "apply_chat_template": False,"max_length": 2048, "cache_traces": False},
+    "hellaswag": {"limit": 2000, "num_fewshot": 0, "apply_chat_template": False,"cache_traces": False},
+    "mmlu": {"limit": 50, "num_fewshot": 5, "apply_chat_template": False},
+    "gsm8k": {"limit": 500, "num_fewshot": 5, "apply_chat_template": False},
+}
 
 USE_TRACE_CACHE = True
 
