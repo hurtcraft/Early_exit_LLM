@@ -18,3 +18,6 @@ class NoExitStrategy(EarlyExitStrategy):
         state: dict,
     ) -> bool:
         return False
+
+    def should_exit_rows(self, layer_idx, logits, hidden, state):
+        return torch.zeros(hidden.shape[0], dtype=torch.bool, device=hidden.device)

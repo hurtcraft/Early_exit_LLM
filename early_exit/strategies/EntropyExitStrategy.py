@@ -74,3 +74,21 @@ class EntropyStrategy(EarlyExitStrategy):
             )
 
         return state["low_entropy_count"] >= self.patience
+
+    def should_exit_rows(self, layer_idx, logits, hidden, state):
+        log_probs = logits.float().log_softmax(dim=-1)
+        h = -(log_probs.exp() * log_probs).sum(dim=-1)   # [P]
+        if self.normalize:
+            h = h / math.log(logits.shape[-1])
+
+        count = state.get("low_entropy_count")
+        if count is None:
+            count = torch.zeros_like(h, dtype=torch.long)
+
+        if layer_idx < self.min_layer:
+            count = torch.zeros_like(count)
+        else:
+            count = torch.where(h <= self.threshold, count + 1, torch.zeros_like(count))
+
+        state["low_entropy_count"] = count
+        return count >= self.patience

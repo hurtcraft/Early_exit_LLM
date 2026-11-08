@@ -52,9 +52,11 @@ def _build_layer_inputs(adapter, input_ids: torch.Tensor, offset: int = 0):
     return hidden, pos, pe, mask
 
 
-def _forward_trace(adapter, input_ids: torch.Tensor, offset: int = 0, cache=None) -> torch.Tensor:
+def _forward_trace(adapter, input_ids: torch.Tensor, offset: int = 0, cache=None,
+                   keep: int = 1) -> torch.Tensor:
     """Exécute toutes les couches sur input_ids et garde le hidden state de la
     dernière position à chaque couche : [n_layers, B, H].
+    keep > 1 : garde les `keep` dernières positions (B = 1) : [n_layers, keep, H].
     cache : DynamicCache lu et mis à jour par les couches (None = sans cache)."""
     tm = adapter.model.model
     hidden, pos, pe, mask = _build_layer_inputs(adapter, input_ids, offset)
@@ -69,7 +71,7 @@ def _forward_trace(adapter, input_ids: torch.Tensor, offset: int = 0, cache=None
             position_embeddings=pe,
             past_key_values=cache,
         )
-        lasts.append(hidden[:, -1, :])
+        lasts.append(hidden[:, -1, :] if keep == 1 else hidden[0, -keep:, :])
 
     return torch.stack(lasts)
 
@@ -91,17 +93,20 @@ class CpuTraceCache(dict):
         return super().__getitem__(key).to(self.device)
 
 
-def _layer_trace(adapter, input_ids: torch.Tensor, cache: dict | None = None) -> torch.Tensor:
+def _layer_trace(adapter, input_ids: torch.Tensor, cache: dict | None = None,
+                 keep: int = 1) -> torch.Tensor:
     """Hidden state de la dernière position à chaque couche : [n_layers, B, H].
+    keep > 1 : les `keep` dernières positions (B = 1) : [n_layers, keep, H].
 
     Toutes les couches sont exécutées sur toute la séquence. Le résultat ne dépend
     que de input_ids (pas de la stratégie) : `cache` le partage entre stratégies.
     """
-    key = tuple(input_ids[0].tolist())
+    ids = tuple(input_ids[0].tolist())
+    key = ids if keep == 1 else (ids, keep)
     if cache is not None and key in cache:
         return cache[key]
 
-    trace = _forward_trace(adapter, input_ids)
+    trace = _forward_trace(adapter, input_ids, keep=keep)
     if cache is not None:
         cache[key] = trace
     return trace
@@ -170,8 +175,61 @@ def _run_layers(adapter, strategy, trace: torch.Tensor, verbose: bool = False):
             break
 
     if lines:
-        lines[-1] += "  [SORTIE]"
+        lines[-1] += "  [EXIT]"
     return layer_logits(exit_layer), exit_layer, lines
+
+
+def _run_layers_rows(adapter, strategy, trace: torch.Tensor, targets: torch.Tensor,
+                     chunk: int = 128):
+    """Early exit indépendant pour chaque position (réponses de plusieurs tokens,
+    perplexité). Chaque position décide seule de sa couche de sortie, comme si
+    c'était un token généré, mais toutes les positions sont traitées en parallèle.
+
+    trace   : [n_layers, P, H], P positions
+    targets : [P] token attendu à chaque position (celui que la position prédit)
+    chunk   : positions traitées ensemble (borne la mémoire des logits [chunk, V])
+
+    Retourne (logprob [P] float32, greedy [P] bool, exit_layer [P] long) :
+    log-probabilité du token attendu et « est-ce le top-1 », lus à la couche de sortie.
+    """
+    n_layers, P, _ = trace.shape
+    last = n_layers - 1
+    start = min(strategy.first_layer(n_layers), last)
+    device = trace.device
+
+    logprob = torch.empty(P, dtype=torch.float32, device=device)
+    greedy = torch.empty(P, dtype=torch.bool, device=device)
+    exit_layer = torch.full((P,), last, dtype=torch.long, device=device)
+
+    def readout(rows: torch.Tensor, layer: int, logits: torch.Tensor | None, c0: int):
+        """rows : indices dans le chunk qui sortent à `layer`."""
+        lg = logits[rows] if logits is not None else adapter.get_logits(trace[layer, c0 + rows])
+        lp = lg.float().log_softmax(dim=-1)
+        tgt = targets[c0 + rows]
+        logprob[c0 + rows] = lp.gather(-1, tgt[:, None]).squeeze(-1)
+        greedy[c0 + rows] = lp.argmax(dim=-1) == tgt
+        exit_layer[c0 + rows] = layer
+
+    for c0 in range(0, P, chunk):
+        p = min(chunk, P - c0)
+        active = torch.ones(p, dtype=torch.bool, device=device)
+        state = {}   # compteurs de la stratégie, un par position
+
+        # la dernière couche n'est pas testée : les positions restantes y sortent
+        for i in range(start, last):
+            hidden = trace[i, c0:c0 + p]
+            logits = adapter.get_logits(hidden) if strategy.needs_logits else None
+            exit_now = strategy.should_exit_rows(i, logits, hidden, state) & active
+            if exit_now.any():
+                readout(exit_now.nonzero().squeeze(1), i, logits, c0)
+                active &= ~exit_now
+                if not active.any():
+                    break
+
+        if active.any():
+            readout(active.nonzero().squeeze(1), last, None, c0)
+
+    return logprob, greedy, exit_layer
 
 
 # ---------- Lignes du mode verbose ----------
@@ -184,7 +242,7 @@ def _short(text: str, width: int = 12) -> str:
     return f"{s:<{width}}"
 
 
-def _fmt_top_k(tok, logits: torch.Tensor, k: int = 3) -> str:
+def _fmt_top_k(tok, logits: torch.Tensor, k: int = 5) -> str:
     probs = logits[0, -1].float().softmax(-1)
     top_p, top_i = probs.topk(k)
     return " | ".join(

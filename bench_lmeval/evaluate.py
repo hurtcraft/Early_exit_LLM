@@ -39,15 +39,19 @@ def evaluate_baseline(adapter, task="mmlu", limit=None, **kwargs) -> dict:
 
 
 def evaluate_early_exit(
-    adapter, strategy, task="mmlu", limit=None, trace_cache=None, **kwargs
+    adapter, strategy, task="mmlu", limit=None, trace_cache=None, max_length=None, **kwargs
 ) -> dict:
+    """max_length : longueur max d'une entrée (None = celle du modèle). Sert surtout
+    à la perplexité (WikiText) : taille des fenêtres de texte, donc mémoire utilisée."""
+    extra = {"max_length": max_length} if max_length else {}
     lm = EarlyExitHFLM(
         adapter, strategy, trace_cache=trace_cache,
-        batch_size=1, enable_thinking=False,
+        batch_size=1, enable_thinking=False, **extra,
     )
     results = run_benchmark(lm, task, limit, **kwargs)
 
-    # une décision par question (loglikelihood) ou par token généré (generate_until)
+    # une décision par question (réponse d'un token), par token de la réponse
+    # (réponse de plusieurs tokens, perplexité) ou par token généré (generate_until)
     exits = torch.tensor(lm.exit_layers, dtype=torch.float)
     last = adapter.num_layers - 1
     results["early_exit"] = {

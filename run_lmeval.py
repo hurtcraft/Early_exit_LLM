@@ -1,4 +1,4 @@
-"""Benchmark lm_eval (MMLU, GSM8K…) des stratégies d'early exit.
+"""Benchmark lm_eval (MMLU, GSM8K, HellaSwag, WikiText…) des stratégies d'early exit.
 
 Pour chaque modèle, chaque benchmark, chaque stratégie : score du benchmark
 + statistiques d'early exit. NoExitStrategy passe en premier (baseline) et remplit
@@ -26,29 +26,33 @@ from early_exit.models.factory import ModelFactory
 from early_exit.strategies.NoExitStrategy import NoExitStrategy
 from early_exit.utils import expand_grid, free_memory, model_tag, strategy_params, timestamp
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
-# tâche lm_eval -> options (limit = nb d'exemples par tâche, None = complet)
-# GSM8K (génération) reste le plus coûteux : une décision par token généré.
+
+# Options lues par ce script (retirées avant l'appel à lm_eval) :
+#   cache_traces : partage les forwards entre stratégies (défaut USE_TRACE_CACHE).
+#                  À désactiver quand une trace garde beaucoup de positions (perplexité,
+#                  réponses longues) : le cache ne tiendrait pas en RAM.
+# Options passées à evaluate_early_exit :
+#   max_length   : longueur max d'une entrée ; pour WikiText = taille des fenêtres.
 BENCHMARKS = {
     #"mmlu": {"limit": 5, "num_fewshot": 5, "apply_chat_template": False},
-    "gsm8k": {"limit": 10},
+    #"gsm8k": {"limit": 10,"num_fewshot": 5, "apply_chat_template": False},
+    # perplexité : limit = nombre d'articles (62 au total, ~4 000 tokens chacun)
+    "wikitext": {"limit": 20, "num_fewshot": None, "apply_chat_template": False,
+                 "max_length": 2048, "cache_traces": False},
+    # QCM à réponses longues (4 fins de phrase) : limit = nombre de questions
+    "hellaswag": {"limit": 1000, "num_fewshot": 0, "apply_chat_template": False,
+                  "cache_traces": False},
 }
 
-# Cache des forwards partagé entre stratégies (en RAM), pour les tâches par
-# loglikelihood (MMLU…). La génération (GSM8K) ne l'utilise pas : KV cache.
+
 USE_TRACE_CACHE = True
 
-# un dossier par lancement
 STAMP = timestamp()
 RESULTS_DIR = Path("results") / "lmeval" / STAMP
 PLOTS_DIR = Path("plots") / "lmeval" / STAMP
 
 
-# --------------------------------------------------
-# Utilitaires
-# --------------------------------------------------
+
 def build_strategies():
     """NoExitStrategy en tête, puis toutes les combinaisons de la grille."""
     strategies = [NoExitStrategy()]
@@ -84,12 +88,9 @@ def print_summary(model_name: str, task: str, runs: list) -> None:
     tqdm.write("\n".join(lines))
 
 
-# --------------------------------------------------
-# Boucle principale : modèles -> benchmarks -> stratégies
-# --------------------------------------------------
+
 runs_per_model = len(BENCHMARKS) * len(build_strategies())
-# barre globale (en haut) : un pas = une stratégie évaluée sur un benchmark.
-# Les barres de lm_eval (questions) et des tokens générés s'affichent en dessous.
+
 bar = tqdm(total=len(MODELS) * runs_per_model, desc="Total", unit="run", position=0)
 
 for model_name, quant in MODELS:
@@ -106,7 +107,9 @@ for model_name, quant in MODELS:
             output = {"model": model_name, "quant": quant, "task": task,
                       "options": options, "n_layers": adapter.num_layers, "runs": []}
 
-            trace_cache = CpuTraceCache(device) if USE_TRACE_CACHE else None
+            eval_options = dict(options)
+            use_cache = eval_options.pop("cache_traces", USE_TRACE_CACHE)
+            trace_cache = CpuTraceCache(device) if use_cache else None
 
             for strategy in build_strategies():
                 run = {"label": label(strategy), "strategy": strategy_params(strategy)}
@@ -114,17 +117,16 @@ for model_name, quant in MODELS:
                 try:
                     run["results"] = evaluate_early_exit(
                         adapter, strategy, task=task,
-                        trace_cache=trace_cache, **options,
+                        trace_cache=trace_cache, **eval_options,
                     )
                 except Exception as e:
-                    # la baseline est indispensable : sans elle, on abandonne ce modèle
                     if isinstance(strategy, NoExitStrategy):
                         raise
                     traceback.print_exc()
                     run["error"] = str(e)
 
                 output["runs"].append(run)
-                save(path, output)   # sauvegarde après chaque stratégie
+                save(path, output)
                 bar.update(1)
                 done += 1
 
@@ -134,14 +136,12 @@ for model_name, quant in MODELS:
             try:
                 plot_benchmark(path, PLOTS_DIR)
             except Exception:
-                # un graphique raté ne doit pas interrompre les évaluations
                 traceback.print_exc()
 
     except Exception as e:
-        # un modèle qui plante n'empêche pas de tester les suivants
         traceback.print_exc()
         tqdm.write(f"!! {model_name} a échoué : {e}")
-        bar.update(runs_per_model - done)   # runs de ce modèle sautés
+        bar.update(runs_per_model - done)
     finally:
         del adapter
         free_memory()

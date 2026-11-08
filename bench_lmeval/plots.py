@@ -1,6 +1,8 @@
 """
 Early exit on lm_eval benchmarks: one figure per JSON file (model x task)
-produced by main_benchmarks.py. All metrics are expressed as percentages.
+produced by main_benchmarks.py. Proportions (acc, exact_match…) are shown in %,
+perplexities (WikiText) as raw values on a log scale (lower is better), cf.
+bench_lmeval/metrics.py.
 
 Panels:
   - one per strategy (dual axis):
@@ -22,6 +24,12 @@ matplotlib.use("Agg")   # figures are only saved (also called during main_benchm
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 
+# lancé directement (python bench_lmeval/plots.py) : rendre le package importable
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from bench_lmeval.metrics import (  # noqa: E402  (score_metrics, metric_name : réexportés)
+    higher_is_better, is_rate, metric_name, primary_metric, score_metrics,
+)
+
 DEFAULT_OUT_DIR = Path(__file__).resolve().parent.parent / "plots" / "lmeval"
 BASELINE = "NoExitStrategy"
 
@@ -32,28 +40,32 @@ PCT = PercentFormatter(xmax=100, decimals=0)
 LABEL_BOX = dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8)
 
 
-# --- metrics in % ------------------------------------------------------------
-def score_metrics(results: dict) -> list:
-    """Benchmark scores (e.g. 'acc,none', 'exact_match,strict-match'), without stderr."""
-    return [k for k, v in results.items() if isinstance(v, float) and "stderr" not in k]
-
-
-def metric_name(key: str) -> str:
-    name, _, filt = key.partition(",")
-    return name if filt in ("", "none") else f"{name} ({filt})"
-
-
-score = lambda r, m: 100 * r["results"].get(m, math.nan)
+# --- metrics -----------------------------------------------------------------
+# proportions en %, perplexités en valeur brute
+score = lambda r, m: (100 if is_rate(m) else 1) * r["results"].get(m, math.nan)
 skipped = lambda r: 100 * (1 - r["results"]["early_exit"]["mean_depth_ratio"])
 
 
-def fmt(v):
+def fmt(v, metric=None):
+    if metric is not None and not is_rate(metric):
+        return f"{v:.3g}"
     return f"{v:.0f}%" if abs(v) >= 10 else f"{v:.1f}%"
 
 
-def annotate(ax, xs, ys, color, above=True):
+def score_axis(ax, metric, label_suffix=""):
+    """Axe Y d'un score : % de -5 à 110 pour une proportion, échelle log sinon."""
+    if is_rate(metric):
+        ax.set_ylim(-5, 110)
+        ax.yaxis.set_major_formatter(PCT)
+        ax.set_ylabel(f"Benchmark score, %{label_suffix}")
+    else:
+        ax.set_yscale("log")
+        ax.set_ylabel(f"{metric_name(metric)}, log scale (lower is better){label_suffix}")
+
+
+def annotate(ax, xs, ys, color, above=True, metric=None):
     for x, y in zip(xs, ys):
-        ax.annotate(fmt(y), (x, y), textcoords="offset points",
+        ax.annotate(fmt(y, metric), (x, y), textcoords="offset points",
                     xytext=(0, 8 if above else -8), ha="center",
                     va="bottom" if above else "top", fontsize=7, color=color,
                     bbox=LABEL_BOX, zorder=10)
@@ -86,7 +98,7 @@ def strategy_panel(ax, sub, base, metrics, strat):
             label = metric_name(m) + (f" (patience={pat})" if len(patiences) > 1 else "")
             ax.plot(xs, ys, color=color, marker=PAT_MARKER[j % len(PAT_MARKER)],
                     linewidth=2, markersize=6, label=label)
-            annotate(ax, xs, ys, color)
+            annotate(ax, xs, ys, color, metric=m)
 
     for j, pat in enumerate(patiences):
         pts = sorted((r for r in sub if r["strategy"].get("patience") == pat),
@@ -96,9 +108,7 @@ def strategy_panel(ax, sub, base, metrics, strat):
                  linewidth=2, markersize=6, markerfacecolor="white",
                  label="skipped layers" + (f" (patience={pat})" if len(patiences) > 1 else ""))
 
-    ax.set_ylim(-5, 110)
-    ax.yaxis.set_major_formatter(PCT)
-    ax.set_ylabel("Benchmark score, % (solid)\nbaseline = dashed")
+    score_axis(ax, metrics[0], " (solid)\nbaseline = dashed")
     gmax = max((skipped(r) for r in sub), default=0) or 1.0
     ax2.set_ylim(-0.05 * gmax, 1.4 * gmax)
     ax2.yaxis.set_major_formatter(PercentFormatter(xmax=100, decimals=1 if gmax < 10 else 0))
@@ -114,26 +124,35 @@ def strategy_panel(ax, sub, base, metrics, strat):
 def tradeoff_panel(ax, runs, base, metric, strategies):
     b = score(base, metric)
     ax.axhline(b, color="black", linestyle="--", linewidth=1.2)
-    ax.scatter(0, b, marker="*", s=300, color="black", zorder=5, label=f"baseline ({fmt(b)})")
+    ax.scatter(0, b, marker="*", s=300, color="black", zorder=5,
+               label=f"baseline ({fmt(b, metric)})")
     for i, strat in enumerate(strategies):
         pts = sorted((r for r in runs if r["strategy"]["name"] == strat), key=skipped)
         ax.plot([skipped(r) for r in pts], [score(r, metric) for r in pts],
                 color=STRAT_COLOR[i % len(STRAT_COLOR)], marker="o", linewidth=2,
                 markersize=6, label=strat)
     ax.set_xlabel("Skipped layers, % of depth (higher = more savings)")
-    ax.set_ylabel(f"{metric_name(metric)}, %")
     ax.xaxis.set_major_formatter(PCT)
-    ax.yaxis.set_major_formatter(PCT)
-    ax.set_ylim(-5, 110)
+    score_axis(ax, metric)
+    if is_rate(metric):
+        ax.set_ylabel(f"{metric_name(metric)}, %")
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, framealpha=0.95)
-    ax.set_title("Score vs layer savings, all strategies\n(best: top right)",
+    best = "top right" if higher_is_better(metric) else "bottom right"
+    ax.set_title(f"Score vs layer savings, all strategies\n(best: {best})",
                  fontsize=12, fontweight="bold")
 
 
 # --- figure ------------------------------------------------------------------
 def _plot_figure(data, runs, base, out: Path, subtitle: str = "") -> Path:
-    metrics = score_metrics(base["results"])
+    # métrique principale en tête ; les autres seulement si ce sont aussi des
+    # proportions (même axe en %). Perplexités : seule la principale (échelles différentes).
+    primary = primary_metric(data["task"], base["results"])
+    if is_rate(primary):
+        metrics = [primary] + [m for m in score_metrics(base["results"])
+                               if m != primary and is_rate(m)]
+    else:
+        metrics = [primary]
     strategies = list(dict.fromkeys(r["strategy"]["name"] for r in runs))
 
     n_panels = len(strategies) + 1

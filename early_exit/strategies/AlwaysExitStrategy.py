@@ -1,3 +1,5 @@
+import torch
+
 from early_exit.strategies.EarlyExitStrategy import EarlyExitStrategy
 
 
@@ -12,3 +14,7 @@ class AlwaysExitStrategy(EarlyExitStrategy):
 
     def should_exit(self, layer_idx, logits, state):
         return layer_idx >= self.layer
+
+    def should_exit_rows(self, layer_idx, logits, hidden, state):
+        return torch.full((hidden.shape[0],), layer_idx >= self.layer,
+                          dtype=torch.bool, device=hidden.device)

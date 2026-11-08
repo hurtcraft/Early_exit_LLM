@@ -67,3 +67,21 @@ class CosineExitStrategy(EarlyExitStrategy):
             )
 
         return state["stable_count"] >= self.patience
+
+    def should_exit_rows(self, layer_idx, logits, hidden, state):
+        current = hidden.float()                          # [P, H]
+        previous = state.get("previous_vector")
+        state["previous_vector"] = current  # toujours mis à jour, même avant min_layer
+
+        count = state.get("stable_count")
+        if count is None:
+            count = torch.zeros(current.shape[0], dtype=torch.long, device=current.device)
+
+        if previous is None or layer_idx < self.min_layer:
+            count = torch.zeros_like(count)
+        else:
+            sim = F.cosine_similarity(current, previous, dim=-1)   # [P]
+            count = torch.where(sim >= self.threshold, count + 1, torch.zeros_like(count))
+
+        state["stable_count"] = count
+        return count >= self.patience

@@ -87,3 +87,21 @@ class StableTokenStrategy(EarlyExitStrategy):
             )
 
         return state["stable_count"] >= self.patience
+
+    def should_exit_rows(self, layer_idx, logits, hidden, state):
+        max_prob, current_token = logits.float().softmax(dim=-1).max(dim=-1)   # [P]
+        previous_token = state.get("previous_token")
+        state["previous_token"] = current_token
+
+        count = state.get("stable_count")
+        if count is None:
+            count = torch.zeros_like(current_token)
+
+        if layer_idx < self.min_layer or previous_token is None:
+            count = torch.zeros_like(count)
+        else:
+            stable = (current_token == previous_token) & (max_prob >= self.threshold)
+            count = torch.where(stable, count + 1, torch.zeros_like(count))
+
+        state["stable_count"] = count
+        return count >= self.patience
