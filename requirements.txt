@@ -4,6 +4,8 @@ torchvision   # importé par transformers pour Qwen3.5 : doit suivre la version 
 torchaudio    # non utilisé, mais préinstallé sur les images RunPod et importé par transformers :
               # le lister force pip à le mettre à jour avec torch (même version, même build CUDA).
               # Ne jamais réinstaller torch seul depuis un index CUDA différent (ex. --index-url .../cu128).
+# torch/torchvision/torchaudio : setup.sh les installe d'abord depuis l'index PyTorch du
+# CUDA du pod (nvcc), puis compile causal-conv1d. Passer par setup.sh plutôt que pip seul.
 transformers==5.17.0
 accelerate==1.15.0
 safetensors==0.8.0
