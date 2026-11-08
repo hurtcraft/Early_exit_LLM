@@ -5,12 +5,12 @@ from early_exit.strategies.StableTokenStrategy import StableTokenStrategy
 
 MODELS = [
     ("qwen3.5-2b", None),
-    # ("qwen3.5-4b", None),
-    # ("qwen3.5-9b", None),
+    ("qwen3.5-4b", None),
+    ("qwen3.5-9b", None),
 ]
 
 
-PATIENCES = [1, 3]
+PATIENCES = [2, 3]
 
 STRATEGY_GRID = [
     (EntropyStrategy,
@@ -20,7 +20,7 @@ STRATEGY_GRID = [
      {"threshold": [0.95, 0.9, 0.7, 0.5, 0.3], "patience": PATIENCES},
      {"min_layer": 1}),
     (CosineExitStrategy,
-     {"threshold": [0.999, 0.998, 0.995, 0.99, 0.98], "patience": PATIENCES},
+     {"threshold": [0.99, 0.98, 0.97, 0.96, 0.95], "patience": PATIENCES},
      {"min_layer": 1}),
 ]
 
