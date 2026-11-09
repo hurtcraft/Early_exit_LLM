@@ -20,6 +20,10 @@ Figures produites, par tâche, dans <out>/<task>/ :
                                  meilleur score je garde ? » : une ligne par modèle,
                                  meilleure config toutes stratégies confondues
                                  (le tableau correspondant est affiché en console)
+  <task>_compute.png             génération seulement (GSM8K) : score de chaque config en
+                                 fonction du calcul relatif (tokens générés x couches par
+                                 token, baseline = 100 %) ; à droite de 100 % la config
+                                 coûte plus cher que le modèle complet
   <task>_<Strategy>_by_threshold.png
                                  ligne 1 : Δscore vs seuil ; ligne 2 : profondeur de
                                  sortie moyenne vs seuil ; une colonne par patience
@@ -52,12 +56,15 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")   # figures uniquement sauvegardées
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import PercentFormatter
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-from bench_lmeval.metrics import is_rate, metric_name, primary_metric  # noqa: E402
+from bench_lmeval.metrics import (  # noqa: E402
+    is_generative, is_rate, metric_name, primary_metric, relative_compute,
+)
 from bench_lmeval.plots import BASELINE  # noqa: E402
 
 FINAL_DIR = ROOT.parent / "final results"   # dossier voisin du projet, sur le Bureau
@@ -122,14 +129,19 @@ def make_entry(path: Path, data: dict) -> dict | None:
             skip_pct=100 * (1 - ee["mean_depth_ratio"]),
             skip_layers=(n - 1) - ee["mean_exit_layer"],
             exit_depth=100 * ee["mean_depth_ratio"],
+            compute_pct=relative_compute(ee, base["results"]["early_exit"], n),
+            n_tokens=ee["n_decisions"],
         ))
     points = [p for p in points if not math.isnan(p["delta"])]
     if not points:
         return None
 
+    generative = is_generative([r["results"]["early_exit"] for r in runs if "early_exit" in r["results"]],
+                               base["results"]["early_exit"])
     return dict(
         model=data["model"], n_layers=n, metric=metric, rate=rate, base_score=base_score,
         label=f"{data['model']} ({n} L)", points=points, path=path, n_runs=len(runs),
+        generative=generative, base_tokens=base["results"]["early_exit"]["n_decisions"],
     )
 
 
@@ -400,6 +412,69 @@ def plot_size_effect(by_task, out):
     save(fig, out)
 
 
+# --- figure 4 : calcul relatif (génération) ----------------------------------
+STRAT_MARKER = ["o", "s", "^", "D", "v"]
+
+
+def plot_compute(task, entries, out):
+    """Génération : score de chaque config en fonction du calcul relatif
+    (tokens générés x couches par token, baseline = 100 %). À droite de 100 % :
+    la config coûte plus cher que le modèle complet, même si elle sort plus tôt."""
+    strategies = strategies_of(entries)
+    markers = {s: STRAT_MARKER[i % len(STRAT_MARKER)] for i, s in enumerate(strategies)}
+    fig, ax = plt.subplots(figsize=(11, 6.8))
+    xmax, ymax = 100, 0
+
+    print(f"\n--- {task} : configs qui coûtent plus cher que le modèle complet "
+          f"(calcul relatif > 100 %) ---")
+    for e in entries:
+        for p in e["points"]:
+            s = score_of(e, p)
+            xmax, ymax = max(xmax, p["compute_pct"]), max(ymax, s)
+            ax.scatter(p["compute_pct"], s, color=e["color"], marker=markers[p["strategy"]],
+                       s=45, alpha=0.8, zorder=3)
+        ax.scatter(100, e["base_score"], marker="*", s=380, color=e["color"],
+                   edgecolor="black", linewidth=1, zorder=5)
+        ymax = max(ymax, e["base_score"])
+
+        costly = sorted((p for p in e["points"] if p["compute_pct"] > 100),
+                        key=lambda p: -p["compute_pct"])
+        print(f"  {e['label']} : {len(costly)}/{len(e['points'])} configs "
+              f"(baseline : {e['base_tokens']} tokens générés)")
+        for p in costly[:5]:
+            print(f"    {p['strategy'].replace('Strategy', '')} {cfg(p)} : calcul {p['compute_pct']:.0f}% "
+                  f"({p['n_tokens']} tokens, {p['skip_pct']:.0f}% de couches sautées/token), "
+                  f"score {fmt_score(e, score_of(e, p))}")
+
+    xmax *= 1.08
+    ax.axvspan(100, xmax, color="#f4cccc", alpha=0.4, linewidth=0, zorder=0)
+    ax.axvline(100, color="black", linestyle="--", linewidth=1.2)
+    ax.text(100, ymax * 1.07, "  costs MORE than the full model →", va="center",
+            ha="left", fontsize=9, color="#a33")
+    ax.text(100, ymax * 1.07, "← real savings  ", va="center", ha="right", fontsize=9,
+            color="dimgray")
+    ax.set_xlim(0, xmax)
+    ax.set_ylim(0, ymax * 1.14)
+    ax.xaxis.set_major_formatter(PCT)
+    if entries[0]["rate"]:
+        ax.yaxis.set_major_formatter(PCT)
+    ax.set_xlabel("Relative compute vs baseline, % (tokens generated × layers per token)")
+    ax.set_ylabel(f"{metric_name(entries[0]['metric'])}" + (", %" if entries[0]["rate"] else ""))
+    ax.grid(alpha=0.3)
+
+    handles = [Patch(facecolor=e["color"], label=e["label"]) for e in entries]
+    handles += [Line2D([], [], marker=markers[s], color="gray", linestyle="none",
+                       markersize=7, label=s) for s in strategies]
+    handles.append(Line2D([], [], marker="*", color="gray", markeredgecolor="black",
+                          linestyle="none", markersize=14, label="baseline (all layers)"))
+    ax.legend(handles=handles, fontsize=9, framealpha=0.95, loc="upper right")
+    ax.set_title(f"{task} | exiting earlier per token does not always save compute\n"
+                 f"(estimate: prompt and strategy overhead not counted)",
+                 fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    save(fig, out)
+
+
 # --- figure 3 : sensibilité au seuil, par stratégie --------------------------
 def plot_by_threshold(task, entries, strategy, out, ymin):
     sel = lambda e, pat: sorted(
@@ -476,6 +551,8 @@ def main():
             print(f"  (un seul modèle pour {task} : figures générées quand même)")
         curve_ymin = args.ymin if args.ymin is not None else CURVE_YMIN
         plot_savings_curve(task, entries, out / f"{task}_savings_curve.png", curve_ymin)
+        if any(e["generative"] for e in entries):
+            plot_compute(task, entries, out / f"{task}_compute.png")
         for strat in strategies_of(entries):
             plot_by_threshold(task, entries, strat, out / f"{task}_{strat}_by_threshold.png",
                               args.ymin)

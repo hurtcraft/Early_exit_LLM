@@ -12,12 +12,29 @@ MODELS = [
 
 PATIENCES = [2, 3]
 
+# Grille "strict" : les N_STRICT seuils les plus stricts de chaque stratégie (les
+# listes sont rangées du plus strict au plus permissif). Pour les tâches où les
+# seuils permissifs cassent le modèle et coûtent cher (GSM8K : générations
+# dégénérées jusqu'à la longueur max).
+N_STRICT = 2
 
-def strategy_grid(n_layers: int) -> list:
+
+def strategy_grid(n_layers: int, grid: str = "full") -> list:
     """Grille des stratégies pour un modèle de n_layers couches.
     min_layer = moitié de la profondeur : même position relative quel que soit le
-    modèle (2B : 24 couches -> 12 ; 4B / 9B : 32 couches -> 16)."""
-    min_layer = n_layers // 2
+    modèle (2B : 24 couches -> 12 ; 4B / 9B : 32 couches -> 16).
+    grid : "full" (toute la grille) ou "strict" (N_STRICT seuils les plus stricts,
+    mêmes patiences : les stratégies restent évaluées de façon équivalente)."""
+    full = _full_grid(n_layers // 2)
+    if grid == "full":
+        return full
+    if grid == "strict":
+        return [(cls, {**params, "threshold": params["threshold"][:N_STRICT]}, fixed)
+                for cls, params, fixed in full]
+    raise ValueError(f"grille inconnue : {grid!r} (attendu : 'full' ou 'strict')")
+
+
+def _full_grid(min_layer: int) -> list:
     return [
         (EntropyStrategy,
          {"threshold": [0.05, 0.1, 0.2, 0.4, 0.6], "patience": PATIENCES},

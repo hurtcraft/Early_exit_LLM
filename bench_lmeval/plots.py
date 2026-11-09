@@ -9,6 +9,8 @@ Panels:
       solid lines  (left axis)  : benchmark score(s) vs threshold, baseline = dashed line
       dotted line  (right axis) : skipped layers / total layers
   - trade-off: main score vs skipped layers, all strategies (baseline = star at 0%)
+  - generation only (GSM8K…): main score vs relative compute (tokens generated x
+    layers per token, baseline = 100%); right of 100% = costs MORE than the full model
 
 Usage: python bench_lmeval/plots.py results/lmeval/<date>/<model>/<task>.json [...]
 Output: plots/lmeval/<model>_<quant>_<task>[_patience<p>].png
@@ -27,7 +29,8 @@ from matplotlib.ticker import PercentFormatter
 # lancé directement (python bench_lmeval/plots.py) : rendre le package importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bench_lmeval.metrics import (  # noqa: E402  (score_metrics, metric_name : réexportés)
-    higher_is_better, is_rate, metric_name, primary_metric, score_metrics,
+    higher_is_better, is_generative, is_rate, metric_name, primary_metric,
+    relative_compute, score_metrics,
 )
 
 DEFAULT_OUT_DIR = Path(__file__).resolve().parent.parent / "plots" / "lmeval"
@@ -143,6 +146,35 @@ def tradeoff_panel(ax, runs, base, metric, strategies):
                  fontsize=12, fontweight="bold")
 
 
+def compute_panel(ax, runs, base, metric, strategies, n_layers):
+    """Génération : score en fonction du calcul relatif (tokens x couches par token)."""
+    be = base["results"]["early_exit"]
+    b = score(base, metric)
+    xmax = 100
+    for i, strat in enumerate(strategies):
+        pts = [r for r in runs if r["strategy"]["name"] == strat]
+        xs = [relative_compute(r["results"]["early_exit"], be, n_layers) for r in pts]
+        xmax = max([xmax] + xs)
+        ax.scatter(xs, [score(r, metric) for r in pts], color=STRAT_COLOR[i % len(STRAT_COLOR)],
+                   s=40, alpha=0.85, label=strat, zorder=3)
+    xmax *= 1.08
+    ax.axvspan(100, xmax, color="#f4cccc", alpha=0.4, linewidth=0,
+               label="costs more than the full model")
+    ax.axvline(100, color="black", linestyle="--", linewidth=1.2)
+    ax.scatter(100, b, marker="*", s=300, color="black", zorder=5,
+               label=f"baseline ({fmt(b, metric)})")
+    ax.set_xlim(0, xmax)
+    ax.xaxis.set_major_formatter(PCT)
+    ax.set_xlabel("Relative compute vs baseline, % (tokens generated × layers per token)")
+    score_axis(ax, metric)
+    if is_rate(metric):
+        ax.set_ylabel(f"{metric_name(metric)}, %")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, framealpha=0.95)
+    ax.set_title("Score vs total compute (generation)\nright of 100% = costs MORE than the full model",
+                 fontsize=12, fontweight="bold")
+
+
 # --- figure ------------------------------------------------------------------
 def _plot_figure(data, runs, base, out: Path, subtitle: str = "") -> Path:
     # métrique principale en tête ; les autres seulement si ce sont aussi des
@@ -154,8 +186,10 @@ def _plot_figure(data, runs, base, out: Path, subtitle: str = "") -> Path:
     else:
         metrics = [primary]
     strategies = list(dict.fromkeys(r["strategy"]["name"] for r in runs))
+    generative = is_generative([r["results"]["early_exit"] for r in runs],
+                               base["results"]["early_exit"])
 
-    n_panels = len(strategies) + 1
+    n_panels = len(strategies) + 1 + generative
     ncols = 2
     nrows = math.ceil(n_panels / ncols)
     fig, axes = plt.subplots(nrows, ncols, figsize=(9 * ncols, 5.5 * nrows), squeeze=False)
@@ -165,6 +199,9 @@ def _plot_figure(data, runs, base, out: Path, subtitle: str = "") -> Path:
         strategy_panel(ax, [r for r in runs if r["strategy"]["name"] == strat],
                        base, metrics, strat)
     tradeoff_panel(axes[len(strategies)], runs, base, metrics[0], strategies)
+    if generative:
+        compute_panel(axes[len(strategies) + 1], runs, base, metrics[0], strategies,
+                      data["n_layers"])
     for ax in axes[n_panels:]:
         ax.axis("off")
 
