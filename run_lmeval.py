@@ -25,6 +25,7 @@ os.environ["SYCL_PI_LEVEL_ZERO_USE_RELAXED_ALLOCATION_LIMITS"] = "1"
 import argparse
 import json
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -54,6 +55,29 @@ BENCHMARKS = {
 }
 
 USE_TRACE_CACHE = True
+
+# Fichier d'avancement lu par l'orchestrateur de launch_parallel.sh (variable
+# d'environnement posée par ce script). Lancé à la main : rien n'est écrit.
+PROGRESS_FILE = os.environ.get("LMEVAL_PROGRESS")
+
+
+class Progress:
+    """Avancement du processus : une ligne "fait|total|sautés|début|statut".
+    sautés = configurations reprises d'un lancement précédent (ignorées pour
+    estimer le temps restant)."""
+
+    def __init__(self, bar):
+        self.bar = bar
+        self.start = int(time.time())
+        self.skipped = 0
+
+    def write(self, status: str) -> None:
+        if not PROGRESS_FILE:
+            return
+        tmp = f"{PROGRESS_FILE}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(f"{self.bar.n}|{self.bar.total}|{self.skipped}|{self.start}|{status}\n")
+        os.replace(tmp, PROGRESS_FILE)   # remplacement atomique : jamais lu à moitié écrit
 
 
 def build_strategies(n_layers: int, grid: str = "full"):
@@ -120,8 +144,10 @@ def parse_args():
     return ap.parse_args()
 
 
-def run_model(model_name, quant, tasks, results_dir, plots_dir, bar):
+def run_model(model_name, quant, tasks, results_dir, plots_dir, progress):
+    bar = progress.bar
     tqdm.write(f"\n######## {model_name} ({quant or 'bf16'}) ########")
+    progress.write(f"{model_name} | chargement du modèle")
     adapter = ModelFactory.load_class(name=model_name, quant=quant)
     device = adapter.model.get_input_embeddings().weight.device
     model_dir = results_dir / model_tag(model_name, quant)
@@ -147,8 +173,10 @@ def run_model(model_name, quant, tasks, results_dir, plots_dir, bar):
                 run = {"label": label(strategy), "strategy": strategy_params(strategy)}
                 if run["label"] in done:
                     bar.update(1)
+                    progress.skipped += 1
                     continue
                 bar.set_postfix_str(f"{model_name} | {task} | {run['label']}")
+                progress.write(f"{model_name} | {task} | {run['label']}")
                 try:
                     run["results"] = evaluate_early_exit(
                         adapter, strategy, task=task,
@@ -186,16 +214,20 @@ def main():
     models = [(m, q) for m, q in MODELS if m in args.models]
     runs_per_model = sum(n_strategies(BENCHMARKS[t].get("grid", "full")) for t in args.tasks)
     bar = tqdm(total=len(models) * runs_per_model, desc="Total", unit="run", position=0)
+    progress = Progress(bar)
+    failed = []
 
     for model_name, quant in models:
         start = bar.n
         try:
-            run_model(model_name, quant, args.tasks, results_dir, plots_dir, bar)
+            run_model(model_name, quant, args.tasks, results_dir, plots_dir, progress)
         except Exception as e:
             traceback.print_exc()
             tqdm.write(f"!! {model_name} a échoué : {e}")
+            failed.append(model_name)
             bar.update(runs_per_model - (bar.n - start))
 
+    progress.write("terminé" if not failed else f"terminé, ÉCHEC : {', '.join(failed)}")
     bar.close()
 
 

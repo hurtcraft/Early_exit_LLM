@@ -41,7 +41,7 @@ STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
 PYTHON="${PYTHON:-python}"
 SESSION="${SESSION:-lmeval}"
 LOG_DIR="logs/lmeval/$STAMP"
-POLL="${POLL:-30}"      # secondes entre deux vérifications de fin
+POLL="${POLL:-10}"      # secondes entre deux actualisations de l'avancement
 GPU_FREE_MB="${GPU_FREE_MB:-1000}"       # mémoire GPU considérée comme libérée en dessous
 GPU_WAIT_MAX="${GPU_WAIT_MAX:-300}"       # attente max de la libération (secondes)
 ALL_PRESETS=(2b 4b 9b)
@@ -97,49 +97,120 @@ wait_gpu_free() {
     done
 }
 
+# --- affichage de l'avancement ------------------------------------------------
+HISTORY=()   # lignes déjà affichées (réaffichées à chaque actualisation)
+
+# écrit une ligne dans le journal et la garde pour l'affichage
+say() {
+    echo "$1"
+    HISTORY+=("$1")
+}
+
+hms() {   # 3725 -> 1h02m
+    local s=$1
+    if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
+    else printf '%dm%02ds' $((s / 60)) $((s % 60)); fi
+}
+
+progress_bar() {   # progress_bar fait total -> [########----------------]
+    local done=$1 total=$2 width=24 n=0
+    [ "$total" -gt 0 ] && n=$((done * width / total))
+    printf '[%s%s]' "$(printf '%*s' "$n" '' | tr ' ' '#')" "$(printf '%*s' $((width - n)) '' | tr ' ' '-')"
+}
+
+# Redessine l'écran de l'orchestrateur. Écrit sur le terminal tmux seulement
+# (pas dans le journal, qui garderait sinon une copie à chaque actualisation).
+draw_progress() {
+    { : > /dev/tty; } 2>/dev/null || return 0   # pas de terminal (journal seul)
+    local preset=$1 sess f done total skipped start status now pct eff eta
+    shift
+    now=$(date +%s)
+    {
+        printf '\033[H\033[2J'   # efface l'écran
+        printf '%s\n' "${HISTORY[@]}"
+        echo
+        echo "--- $preset en cours | $(date '+%F %T') | actualisé toutes les ${POLL} s ---"
+        for sess in "$@"; do
+            f="$LOG_DIR/$sess.progress"
+            if [ -f "$LOG_DIR/$sess.done" ]; then
+                printf '  %-28s terminé (code %s)\n' "$sess" "$(cat "$LOG_DIR/$sess.done")"
+                continue
+            fi
+            if [ ! -f "$f" ]; then
+                printf '  %-28s démarrage…\n' "$sess"
+                continue
+            fi
+            IFS="|" read -r done total skipped start status < "$f"
+            pct=0; [ "$total" -gt 0 ] && pct=$((100 * done / total))
+            eff=$((done - skipped))    # configs calculées par ce processus
+            eta="?"
+            [ "$eff" -gt 0 ] && eta="~$(hms $(( (now - start) * (total - done) / eff )))"
+            printf '  %-28s %s %3d/%-3d %3d%%  écoulé %s  reste %s\n' \
+                "$sess" "$(progress_bar "$done" "$total")" "$done" "$total" "$pct" \
+                "$(hms $((now - start)))" "$eta"
+            printf '  %-28s   └ %s\n' "" "$status"
+        done
+        echo
+        echo "(restant estimé d'après la durée moyenne des configs déjà faites)"
+        echo "(Ctrl+B puis D : quitter sans arrêter)"
+    } > /dev/tty
+}
+
 # --- orchestrateur : tourne dans la session tmux "$SESSION" ------------------
 orchestrate() {
     mkdir -p "$LOG_DIR"
-    echo "Stamp : $STAMP | préréglages : $* | résultats : results/lmeval/$STAMP/"
+    say "Stamp : $STAMP | préréglages : $* | résultats : results/lmeval/$STAMP/"
 
     for preset in "$@"; do
-        echo
-        echo "=== $preset : démarrage $(date '+%F %T') ==="
-        wait_gpu_free   # le modèle précédent doit avoir rendu la mémoire GPU
+        say ""
+        say "=== $preset : démarrage $(date '+%F %T') ==="
+        say "$(wait_gpu_free)"   # le modèle précédent doit avoir rendu la mémoire GPU
         sessions=()
         while IFS="|" read -r name model tasks; do
             sess="$SESSION-$preset-$name"
             log="$LOG_DIR/$sess.log"
             marker="$LOG_DIR/$sess.done"
-            rm -f "$marker"
+            progress="$LOG_DIR/$sess.progress"
+            rm -f "$marker" "$progress"
             if session_exists "$sess"; then
-                echo "  !! session '$sess' déjà ouverte (lancement précédent ?) : ignorée"
+                say "  !! session '$sess' déjà ouverte (lancement précédent ?) : ignorée"
                 continue
             fi
+            # LMEVAL_PROGRESS : fichier d'avancement écrit par run_lmeval.py.
             # pipefail : code de retour de python (pas de tee), écrit dans le marqueur
             # de fin lu par l'orchestrateur. La session reste ouverte (exec bash).
-            cmd="set -o pipefail; $PYTHON run_lmeval.py --models $model --tasks $tasks --stamp $STAMP 2>&1 | tee -a '$log'; status=\$?; echo \$status > '$marker'; echo; echo \"== $sess terminé (code \$status) : $log ==\"; exec bash"
+            cmd="set -o pipefail; LMEVAL_PROGRESS='$progress' $PYTHON run_lmeval.py --models $model --tasks $tasks --stamp $STAMP 2>&1 | tee -a '$log'; status=\$?; echo \$status > '$marker'; echo; echo \"== $sess terminé (code \$status) : $log ==\"; exec bash"
             tmux new-session -d -s "$sess" -c "$PWD" "bash -c $(printf '%q' "$cmd")"
             sessions+=("$sess")
-            echo "  session '$sess' : $model | $tasks   (tmux attach -t $sess)"
+            say "  session '$sess' : $model | $tasks   (tmux attach -t $sess)"
         done < <(jobs_for "$preset")
 
         # attend la fin de tous les processus du préréglage (marqueur écrit, ou
-        # session fermée à la main)
-        for sess in "${sessions[@]}"; do
-            marker="$LOG_DIR/$sess.done"
-            until [ -f "$marker" ] || ! session_exists "$sess"; do
-                sleep "$POLL"
+        # session fermée à la main), en affichant l'avancement
+        pending=(${sessions[@]+"${sessions[@]}"})
+        while [ ${#pending[@]} -gt 0 ]; do
+            still=()
+            for sess in "${pending[@]}"; do
+                marker="$LOG_DIR/$sess.done"
+                if [ -f "$marker" ] || ! session_exists "$sess"; then
+                    say "  $sess : terminé $(date '+%F %T') (code $(cat "$marker" 2>/dev/null || echo 'session fermée'))"
+                else
+                    still+=("$sess")
+                fi
             done
-            status=$(cat "$marker" 2>/dev/null || echo "session fermée")
-            echo "  $sess : terminé $(date '+%F %T') (code $status)"
+            pending=(${still[@]+"${still[@]}"})
+            [ ${#pending[@]} -gt 0 ] || break
+            draw_progress "$preset" "${sessions[@]}"
+            sleep "$POLL"
         done
-        echo "=== $preset : terminé ==="
+        say "=== $preset : terminé ==="
+        # écran propre : historique seul (le tableau du préréglage fini disparaît)
+        { { printf '\033[H\033[2J'; printf '%s\n' "${HISTORY[@]}"; } > /dev/tty; } 2>/dev/null || true
     done
 
-    echo
-    echo "Tout est terminé $(date '+%F %T'). Figures de comparaison :"
-    echo "  $PYTHON compare_model.py results/lmeval/$STAMP --out plots/compare/$STAMP"
+    say ""
+    say "Tout est terminé $(date '+%F %T'). Figures de comparaison :"
+    say "  $PYTHON compare_model.py results/lmeval/$STAMP --out plots/compare/$STAMP"
 }
 
 if [ "${1:-}" = "--orchestrate" ]; then
