@@ -8,6 +8,7 @@ Usage :
     python run_lmeval.py                                  # tous les modèles, toutes les tâches
     python run_lmeval.py --models qwen3.5-2b --tasks gsm8k
     python run_lmeval.py --stamp 20261109_120000          # reprend / complète ce lancement
+    python run_lmeval.py --lens tuned                     # tuned lens (= run_lmeval_tuned_lens.py)
 
 --stamp : nom du dossier de résultats. Plusieurs processus lancés avec le même
 stamp écrivent dans le même dossier (un fichier par modèle x tâche). Si le JSON
@@ -35,6 +36,7 @@ from bench_lmeval.evaluate import evaluate_early_exit
 from bench_lmeval.plots import plot_benchmark
 from config import MODELS, strategy_grid
 from early_exit.layers import CpuTraceCache
+from early_exit.lens import TunedLens
 from early_exit.models.factory import ModelFactory
 from early_exit.strategies.NoExitStrategy import NoExitStrategy
 from early_exit.utils import expand_grid, free_memory, model_tag, strategy_params, timestamp
@@ -55,6 +57,12 @@ BENCHMARKS = {
 }
 
 USE_TRACE_CACHE = True
+
+# Lecture des couches intermédiaires : "logit" (norm + lm_head) ou "tuned"
+# (translateurs de lenses/<modèle>.pt, cf. train_lens.py). Avec "tuned", résultats et
+# figures vont dans results/lmeval_tuned/ et plots/lmeval_tuned/.
+LENSES = ("logit", "tuned")
+LENS_DIR = Path("lenses")
 
 # Fichier d'avancement lu par l'orchestrateur de launch_parallel.sh (variable
 # d'environnement posée par ce script). Lancé à la main : rien n'est écrit.
@@ -132,7 +140,7 @@ def print_summary(model_name: str, task: str, runs: list) -> None:
     tqdm.write("\n".join(lines))
 
 
-def parse_args():
+def parse_args(default_lens: str = "logit"):
     model_names = [m for m, _ in MODELS]
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", nargs="+", default=model_names, choices=model_names,
@@ -141,21 +149,39 @@ def parse_args():
                     help="tâches à évaluer (défaut : toutes celles de BENCHMARKS)")
     ap.add_argument("--stamp", default=None,
                     help="dossier de résultats (défaut : date et heure) ; existant = reprise")
+    ap.add_argument("--lens", default=default_lens, choices=LENSES,
+                    help=f"lecture des couches intermédiaires (défaut : {default_lens})")
     return ap.parse_args()
 
 
-def run_model(model_name, quant, tasks, results_dir, plots_dir, progress):
+def load_lens(adapter, model_name: str) -> TunedLens:
+    path = LENS_DIR / f"{model_name}.pt"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} absent : entraîner le lens (python train_lens.py "
+                                f"--models {model_name}) ou le télécharger")
+    lens = TunedLens.load(path, adapter)
+    tqdm.write(f"Tuned lens : {path} (couches {lens.layers[0]}..{lens.layers[-1]})")
+    return lens
+
+
+def run_model(model_name, quant, tasks, results_dir, plots_dir, progress, lens="logit"):
     bar = progress.bar
-    tqdm.write(f"\n######## {model_name} ({quant or 'bf16'}) ########")
+    tqdm.write(f"\n######## {model_name} ({quant or 'bf16'}, {lens} lens) ########")
     progress.write(f"{model_name} | chargement du modèle")
     adapter = ModelFactory.load_class(name=model_name, quant=quant)
+    if lens == "tuned":
+        adapter.lens = load_lens(adapter, model_name)
     device = adapter.model.get_input_embeddings().weight.device
     model_dir = results_dir / model_tag(model_name, quant)
     model_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         for task in tasks:
-            options = BENCHMARKS[task]
+            # "lens" n'est ajouté qu'avec le tuned lens : les JSON logit existants
+            # restent repris à l'identique (--stamp)
+            options = dict(BENCHMARKS[task])
+            if lens != "logit":
+                options["lens"] = lens
             path = model_dir / f"{task}.json"
             runs = load_previous(path, options)
             done = {r["label"] for r in runs}
@@ -167,6 +193,7 @@ def run_model(model_name, quant, tasks, results_dir, plots_dir, progress):
             eval_options = dict(options)
             use_cache = eval_options.pop("cache_traces", USE_TRACE_CACHE)
             grid = eval_options.pop("grid", "full")
+            eval_options.pop("lens", None)
             trace_cache = CpuTraceCache(device) if use_cache else None
 
             for strategy in build_strategies(adapter.num_layers, grid):
@@ -204,11 +231,12 @@ def run_model(model_name, quant, tasks, results_dir, plots_dir, progress):
         free_memory()
 
 
-def main():
-    args = parse_args()
+def main(default_lens: str = "logit"):
+    args = parse_args(default_lens)
     stamp = args.stamp or timestamp()
-    results_dir = Path("results") / "lmeval" / stamp
-    plots_dir = Path("plots") / "lmeval" / stamp
+    sub = "lmeval" if args.lens == "logit" else f"lmeval_{args.lens}"
+    results_dir = Path("results") / sub / stamp
+    plots_dir = Path("plots") / sub / stamp
     tqdm.write(f"Résultats dans {results_dir}")
 
     models = [(m, q) for m, q in MODELS if m in args.models]
@@ -220,7 +248,7 @@ def main():
     for model_name, quant in models:
         start = bar.n
         try:
-            run_model(model_name, quant, args.tasks, results_dir, plots_dir, progress)
+            run_model(model_name, quant, args.tasks, results_dir, plots_dir, progress, args.lens)
         except Exception as e:
             traceback.print_exc()
             tqdm.write(f"!! {model_name} a échoué : {e}")

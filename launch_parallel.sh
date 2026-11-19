@@ -10,6 +10,11 @@
 #   ./launch_parallel.sh                  # 2b, puis 4b, puis 9b
 #   ./launch_parallel.sh 4b 9b            # seulement ces préréglages, dans cet ordre
 #   STAMP=20261109_120000 ./launch_parallel.sh   # reprend / complète ce lancement
+#   LENS=tuned ./launch_parallel.sh       # tuned lens (lenses/<modèle>.pt) au lieu du logit lens
+#
+# LENS=tuned : résultats dans results/lmeval_tuned/<STAMP>/, journaux dans
+# logs/lmeval_tuned/<STAMP>/, sessions tmux préfixées "lmeval-tuned" (un lancement
+# logit et un lancement tuned peuvent donc coexister).
 #
 # Déroulement : une session tmux "lmeval" (l'orchestrateur) lance les processus
 # d'un préréglage, chacun dans sa propre session ("lmeval-2b-gsm8k"…), attend
@@ -18,7 +23,8 @@
 # suivant. Le script rend la main tout de suite : tout tourne dans tmux et survit
 # à une coupure SSH.
 #
-# Variables optionnelles : STAMP, SESSION (préfixe des sessions tmux), PYTHON.
+# Variables optionnelles : STAMP, LENS (logit | tuned), SESSION (préfixe des
+# sessions tmux), PYTHON.
 #
 # Suivre les calculs :
 #   tmux ls                          liste des sessions
@@ -39,8 +45,15 @@ SCRIPT="$(basename "$0")"
 
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
 PYTHON="${PYTHON:-python}"
-SESSION="${SESSION:-lmeval}"
-LOG_DIR="logs/lmeval/$STAMP"
+LENS="${LENS:-logit}"
+case "$LENS" in
+    logit) SUB="lmeval";       DEFAULT_SESSION="lmeval";       COMPARE_DIR="plots/compare" ;;
+    tuned) SUB="lmeval_tuned"; DEFAULT_SESSION="lmeval-tuned"; COMPARE_DIR="plots/compare_tuned" ;;
+    *) echo "LENS inconnu : $LENS (attendu : logit ou tuned)" >&2; exit 1 ;;
+esac
+SESSION="${SESSION:-$DEFAULT_SESSION}"
+RESULTS_DIR="results/$SUB/$STAMP"         # même chemin que run_lmeval.py --lens $LENS
+LOG_DIR="logs/$SUB/$STAMP"
 POLL="${POLL:-10}"      # secondes entre deux actualisations de l'avancement
 GPU_FREE_MB="${GPU_FREE_MB:-1000}"       # mémoire GPU considérée comme libérée en dessous
 GPU_WAIT_MAX="${GPU_WAIT_MAX:-300}"       # attente max de la libération (secondes)
@@ -159,7 +172,7 @@ draw_progress() {
 # --- orchestrateur : tourne dans la session tmux "$SESSION" ------------------
 orchestrate() {
     mkdir -p "$LOG_DIR"
-    say "Stamp : $STAMP | préréglages : $* | résultats : results/lmeval/$STAMP/"
+    say "Stamp : $STAMP | lens : $LENS | préréglages : $* | résultats : $RESULTS_DIR/"
 
     for preset in "$@"; do
         say ""
@@ -179,7 +192,7 @@ orchestrate() {
             # LMEVAL_PROGRESS : fichier d'avancement écrit par run_lmeval.py.
             # pipefail : code de retour de python (pas de tee), écrit dans le marqueur
             # de fin lu par l'orchestrateur. La session reste ouverte (exec bash).
-            cmd="set -o pipefail; LMEVAL_PROGRESS='$progress' $PYTHON run_lmeval.py --models $model --tasks $tasks --stamp $STAMP 2>&1 | tee -a '$log'; status=\$?; echo \$status > '$marker'; echo; echo \"== $sess terminé (code \$status) : $log ==\"; exec bash"
+            cmd="set -o pipefail; LMEVAL_PROGRESS='$progress' $PYTHON run_lmeval.py --models $model --tasks $tasks --stamp $STAMP --lens $LENS 2>&1 | tee -a '$log'; status=\$?; echo \$status > '$marker'; echo; echo \"== $sess terminé (code \$status) : $log ==\"; exec bash"
             tmux new-session -d -s "$sess" -c "$PWD" "bash -c $(printf '%q' "$cmd")"
             sessions+=("$sess")
             say "  session '$sess' : $model | $tasks   (tmux attach -t $sess)"
@@ -210,7 +223,7 @@ orchestrate() {
 
     say ""
     say "Tout est terminé $(date '+%F %T'). Figures de comparaison :"
-    say "  $PYTHON compare_model.py results/lmeval/$STAMP --out plots/compare/$STAMP"
+    say "  $PYTHON compare_model.py $RESULTS_DIR --out $COMPARE_DIR/$STAMP"
 }
 
 if [ "${1:-}" = "--orchestrate" ]; then
@@ -230,6 +243,21 @@ for p in "${PRESETS[@]}"; do
     fi
 done
 
+# tuned lens : chaque modèle lancé doit avoir son lens (sinon échec au chargement)
+if [ "$LENS" = "tuned" ]; then
+    missing=()
+    for p in "${PRESETS[@]}"; do
+        while IFS="|" read -r name model tasks; do
+            [ -f "lenses/$model.pt" ] || missing+=("lenses/$model.pt")
+        done < <(jobs_for "$p")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Tuned lens absents : $(printf '%s\n' "${missing[@]}" | sort -u | tr '\n' ' ')" >&2
+        echo "Les entraîner (python train_lens.py --models …) ou les télécharger dans lenses/." >&2
+        exit 1
+    fi
+fi
+
 if ! command -v tmux >/dev/null; then
     echo "tmux introuvable (installé par setup.sh)" >&2
     exit 1
@@ -248,12 +276,13 @@ if [ ${#existing[@]} -gt 0 ]; then
 fi
 
 mkdir -p "$LOG_DIR"
-orch_cmd="STAMP=$(printf '%q' "$STAMP") PYTHON=$(printf '%q' "$PYTHON") SESSION=$(printf '%q' "$SESSION") bash $(printf '%q' "./$SCRIPT") --orchestrate ${PRESETS[*]} 2>&1 | tee -a $(printf '%q' "$LOG_DIR/$SESSION.log"); exec bash"
+orch_cmd="STAMP=$(printf '%q' "$STAMP") LENS=$(printf '%q' "$LENS") PYTHON=$(printf '%q' "$PYTHON") SESSION=$(printf '%q' "$SESSION") bash $(printf '%q' "./$SCRIPT") --orchestrate ${PRESETS[*]} 2>&1 | tee -a $(printf '%q' "$LOG_DIR/$SESSION.log"); exec bash"
 tmux new-session -d -s "$SESSION" -c "$PWD" "bash -c $(printf '%q' "$orch_cmd")"
 
 echo "Stamp        : $STAMP"
+echo "Lens         : $LENS"
 echo "Préréglages  : ${PRESETS[*]} (l'un après l'autre)"
-echo "Résultats    : results/lmeval/$STAMP/"
+echo "Résultats    : $RESULTS_DIR/"
 echo "Journaux     : $LOG_DIR/"
 echo
 echo "Sessions tmux (créées au fur et à mesure, un modèle à la fois) :"

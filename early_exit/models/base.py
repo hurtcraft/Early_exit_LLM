@@ -7,6 +7,10 @@ import torch
 class BaseModel(ABC):
     """Interface commune aux modèles évalués."""
 
+    # Tuned lens (early_exit/lens.py) appliqué par get_logits aux couches
+    # intermédiaires. None = logit lens (comportement d'origine).
+    lens = None
+
     def __init__(self, model: Any, tokenizer: Any):
         self.model = model
         self.tokenizer = tokenizer
@@ -38,6 +42,8 @@ class BaseModel(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Calcule les logits à partir d'une représentation intermédiaire."""
+    def get_logits(self, hidden_states: torch.Tensor, layer: int | None = None) -> torch.Tensor:
+        """Calcule les logits à partir d'une représentation intermédiaire.
+        layer : couche d'où vient hidden_states ; avec un tuned lens chargé, son
+        translateur est appliqué avant la tête (None = pas de lens)."""
         raise NotImplementedError

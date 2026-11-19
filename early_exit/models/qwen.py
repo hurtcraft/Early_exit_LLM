@@ -64,7 +64,10 @@ class QwenModel(BaseModel):
             auxiliary_outputs = ()
 
         return hidden_states, {"auxiliary_outputs": auxiliary_outputs}
-    def get_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def get_logits(self, hidden_states: torch.Tensor, layer: int | None = None) -> torch.Tensor:
+        # tuned lens : translateur de la couche (identité pour la dernière couche)
+        if self.lens is not None and layer is not None:
+            hidden_states = self.lens(hidden_states, layer)
         normalized = self.model.model.norm(hidden_states)
 
         return self.model.lm_head(normalized)

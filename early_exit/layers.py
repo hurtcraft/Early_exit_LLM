@@ -138,6 +138,14 @@ class LayerTracer:
         return trace
 
 
+def _project_layers(adapter, hiddens: torch.Tensor, first: int) -> torch.Tensor:
+    """Logits de plusieurs couches consécutives (first, first+1, …) en une seule
+    projection. Avec un tuned lens, chaque couche passe d'abord par son translateur."""
+    if adapter.lens is not None:
+        hiddens = torch.stack([adapter.lens(h, first + k) for k, h in enumerate(hiddens)])
+    return adapter.get_logits(hiddens)
+
+
 def _run_layers(adapter, strategy, trace: torch.Tensor, verbose: bool = False):
     """Rejoue la stratégie couche par couche sur la trace.
     Retourne (logits [B, 1, V], couche de sortie, lignes d'affichage verbose)."""
@@ -150,12 +158,12 @@ def _run_layers(adapter, strategy, trace: torch.Tensor, verbose: bool = False):
 
     # Une seule projection pour toutes les couches : les poids du lm_head
     # (la plus grosse matrice du modèle) ne sont lus qu'une fois.
-    all_logits = adapter.get_logits(trace[start:]) if project and start < n_layers else None
+    all_logits = _project_layers(adapter, trace[start:], start) if project and start < n_layers else None
 
     def layer_logits(i):
         if all_logits is not None and i >= start:
             return all_logits[i - start][:, None, :]
-        return adapter.get_logits(trace[i][:, None, :])
+        return adapter.get_logits(trace[i][:, None, :], layer=i)
 
     state = {}  # remis à zéro à chaque token
     exit_layer = n_layers - 1
@@ -203,7 +211,7 @@ def _run_layers_rows(adapter, strategy, trace: torch.Tensor, targets: torch.Tens
 
     def readout(rows: torch.Tensor, layer: int, logits: torch.Tensor | None, c0: int):
         """rows : indices dans le chunk qui sortent à `layer`."""
-        lg = logits[rows] if logits is not None else adapter.get_logits(trace[layer, c0 + rows])
+        lg = logits[rows] if logits is not None else adapter.get_logits(trace[layer, c0 + rows], layer=layer)
         lp = lg.float().log_softmax(dim=-1)
         tgt = targets[c0 + rows]
         logprob[c0 + rows] = lp.gather(-1, tgt[:, None]).squeeze(-1)
@@ -218,7 +226,7 @@ def _run_layers_rows(adapter, strategy, trace: torch.Tensor, targets: torch.Tens
         # la dernière couche n'est pas testée : les positions restantes y sortent
         for i in range(start, last):
             hidden = trace[i, c0:c0 + p]
-            logits = adapter.get_logits(hidden) if strategy.needs_logits else None
+            logits = adapter.get_logits(hidden, layer=i) if strategy.needs_logits else None
             exit_now = strategy.should_exit_rows(i, logits, hidden, state) & active
             if exit_now.any():
                 readout(exit_now.nonzero().squeeze(1), i, logits, c0)

@@ -1,6 +1,8 @@
 # --- Models (downloaded weights) ---
 # "/" initial : seulement models/ à la racine, pas early_exit/models/ (du code)
 /models/
+# tuned lens entraînés (train_lens.py) : publiés sur Hugging Face, pas sur GitHub
+/lenses/
 *.safetensors
 *.bin
 *.pt
