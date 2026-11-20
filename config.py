@@ -4,9 +4,9 @@ from early_exit.strategies.EntropyExitStrategy import EntropyStrategy
 from early_exit.strategies.StableTokenStrategy import StableTokenStrategy
 
 MODELS = [
-    #("qwen3.5-2b", None),
-    ("qwen3.5-4b", None),
-    ("qwen3.5-9b", None),
+    ("qwen3.5-2b", None),
+    #("qwen3.5-4b", None),
+    #("qwen3.5-9b", None),
 ]
 
 
